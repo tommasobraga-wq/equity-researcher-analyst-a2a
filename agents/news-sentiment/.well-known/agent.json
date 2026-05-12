@@ -1,0 +1,11 @@
+{
+  "name": "NewsSentiment",
+  "version": "1.0.0",
+  "description": "Fetches and clusters financial news from RSS feeds into market themes",
+  "url": "http://localhost:8002",
+  "capabilities": ["rss_news", "theme_clustering", "sentiment_analysis"],
+  "input_schema": {
+    "focus": "string — optional sector/topic focus",
+    "max_items": "integer — max news items per feed (default 5)"
+  }
+}

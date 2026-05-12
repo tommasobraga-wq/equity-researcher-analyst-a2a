@@ -1,0 +1,10 @@
+{
+  "name": "DataCollector",
+  "version": "1.0.0",
+  "description": "Fetches real fundamental data for equity tickers (US/EU) via yfinance",
+  "url": "http://localhost:8001",
+  "capabilities": ["equity_fundamentals", "analyst_consensus", "price_data"],
+  "input_schema": {
+    "tickers": "list[string] — e.g. ['AAPL', 'UCG.MI', 'ASML.AS']"
+  }
+}

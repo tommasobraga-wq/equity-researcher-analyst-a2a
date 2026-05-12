@@ -1,0 +1,13 @@
+{
+  "name": "ReportWriter",
+  "version": "1.0.0",
+  "description": "Produces the final equity research report: Italian executive summary + structured JSON",
+  "url": "http://localhost:8005",
+  "capabilities": ["report_generation", "structured_output", "qa_review", "italian_output"],
+  "input_schema": {
+    "candidates": "list — candidates from FundamentalAnalyst",
+    "risk_assessment": "list — risk data from RiskAssessor",
+    "news": "list — news from NewsSentiment",
+    "themes": "list — themes from NewsSentiment"
+  }
+}

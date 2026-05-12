@@ -1,0 +1,12 @@
+{
+  "name": "FundamentalAnalyst",
+  "version": "1.0.0",
+  "description": "Clusters news into themes, screens equity candidates and enriches them with fundamentals",
+  "url": "http://localhost:8003",
+  "capabilities": ["theme_analysis", "stock_screening", "fundamental_enrichment"],
+  "input_schema": {
+    "news": "list — news items from NewsSentiment agent",
+    "themes": "list — market themes from NewsSentiment agent",
+    "fundamentals": "list — fundamentals from DataCollector agent"
+  }
+}

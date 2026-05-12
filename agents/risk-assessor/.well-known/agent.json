@@ -1,0 +1,10 @@
+{
+  "name": "RiskAssessor",
+  "version": "1.0.0",
+  "description": "Evaluates equity candidates with scenario analysis and scoring (max 50). Refuses output if volatility data is incomplete.",
+  "url": "http://localhost:8004",
+  "capabilities": ["risk_scoring", "scenario_analysis", "conditional_constraints"],
+  "input_schema": {
+    "candidates": "list — equity candidates from FundamentalAnalyst agent"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "Orchestrator",
+  "version": "1.0.0",
+  "description": "Sequential pipeline orchestrator for the equity research A2A system",
+  "url": "http://localhost:8000",
+  "capabilities": ["pipeline_orchestration", "equity_research"],
+  "input_schema": {
+    "tickers": "list[string] — equity tickers to analyse"
+  }
+}

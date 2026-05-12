@@ -1,0 +1,62 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "equity-researcher-analyst-a2a"
+version = "0.1.0"
+description = "Multi-agent equity research system via A2A protocol"
+requires-python = ">=3.11"
+dependencies = [
+    # HTTP servers (every agent)
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    # Anthropic — Orchestrator, Report Writer, shared
+    "anthropic>=0.40.0",
+    # OpenAI Agents SDK — Data Collector
+    "openai-agents>=0.0.7",
+    # Smolagents — News & Sentiment
+    "smolagents>=1.0.0",
+    # BeeAI — Fundamental Analyst, Risk Assessor
+    "beeai-framework>=0.1.0",
+    # Financial data tools
+    "feedparser>=6.0.12",
+    "yfinance>=1.2.0",
+    # Orchestrator
+    "langgraph>=0.2.0",
+    # Shared utilities
+    "pydantic>=2.0.0",
+    "httpx>=0.27.0",
+    "python-dotenv>=1.0.0",
+    "rich>=13.0.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["shared", "orchestrator", "agents"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.4.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "integration: test con chiamate LLM reali (esclusi di default)",
+]
+addopts = "-m 'not integration'"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]  # E=stile, F=errori logici, I=import ordinati
+
+[tool.ruff.lint.per-file-ignores]
+# prompt strings e firme BeeAI non spezzabili senza peggiorare la leggibilità
+"agents/report-writer/agent.py" = ["E501"]
+"agents/risk-assessor/agent.py" = ["E501"]
