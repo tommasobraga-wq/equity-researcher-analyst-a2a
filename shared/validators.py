@@ -25,6 +25,11 @@ _CRYPTO_KEYWORDS = {
     "stablecoin", "litecoin", "polkadot", "avalanche",
 }
 
+_CRYPTO_RE = re.compile(
+    r"\b(" + "|".join(re.escape(kw) for kw in _CRYPTO_KEYWORDS) + r")\b",
+    re.IGNORECASE,
+)
+
 _DIRECTIVE_RE = re.compile(
     r"\b(comprat[eio]|vendete?|acquistat[eio]|shortate?|"
     r"buy\s+now|sell\s+now|acquistare\s+subito|comprare\s+subito|"
@@ -82,7 +87,7 @@ def validate(report: Report | None) -> list[Violation]:
             violations.append(Violation(rule="no_uk_stocks", severity="error", ticker=c.ticker,
                 message=f"{c.ticker}: titolo LSE (UK) — escluso dall'universo."))
 
-        crypto_hits = {kw for kw in _CRYPTO_KEYWORDS if kw in f"{c.ticker} {c.azienda}".lower()}
+        crypto_hits = {m.group().lower() for m in _CRYPTO_RE.finditer(f"{c.ticker} {c.azienda}")}
         if crypto_hits:
             violations.append(Violation(rule="no_crypto", severity="error", ticker=c.ticker,
                 message=f"{c.ticker}: keyword crypto rilevata ({', '.join(sorted(crypto_hits))})."))
@@ -125,7 +130,7 @@ def validate(report: Report | None) -> list[Violation]:
 
     for t in report.temi:
         text = _full_text_tema(t)
-        crypto_hits = {kw for kw in _CRYPTO_KEYWORDS if kw in text.lower()}
+        crypto_hits = {m.group().lower() for m in _CRYPTO_RE.finditer(text)}
         if crypto_hits:
             violations.append(Violation(rule="no_crypto", severity="error", ticker=None,
                 message=f"Tema '{t.tema_id}': keyword crypto rilevata ({', '.join(sorted(crypto_hits))})."))
