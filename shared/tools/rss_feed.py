@@ -3,6 +3,8 @@ import time
 
 import feedparser
 
+from shared.sanitize import sanitize_external_text
+
 _MAX_RETRIES = 2
 _RETRY_BACKOFF = 2  # seconds
 _ITEMS_PER_FEED = 5
@@ -37,9 +39,11 @@ def fetch_rss_news(max_items_per_feed: int = _ITEMS_PER_FEED) -> str:
 
         if entries:
             for entry in entries[:max_items_per_feed]:
-                title = entry.get("title", "")
-                summary = entry.get("summary", entry.get("description", ""))[:300]
-                link = entry.get("link", "")
+                title = sanitize_external_text(entry.get("title", ""), max_len=200)
+                summary = sanitize_external_text(
+                    entry.get("summary", entry.get("description", "")), max_len=300
+                )
+                link = sanitize_external_text(entry.get("link", ""), max_len=500)
                 items.append(f"[{source}] {title}\n{summary}\nURL: {link}")
         else:
             failed.append(source)

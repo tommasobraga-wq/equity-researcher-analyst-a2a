@@ -59,7 +59,7 @@ class A2ATask(BaseModel):
 
 class A2ATaskResult(BaseModel):
     id: str
-    status: Literal["completed", "failed", "working"]
+    status: Literal["completed", "failed", "working", "invalid"]
     message: Message
     metadata: dict[str, Any] = {}
 
@@ -77,6 +77,18 @@ class A2ATaskResult(BaseModel):
             status="failed",
             message=Message(role="agent", parts=[TextPart(text=error)]),
         )
+
+    @classmethod
+    def invalid(cls, task_id: str, error: str, corrections: list[dict[str, Any]] | None = None) -> "A2ATaskResult":
+        """Content/QA rejection — distinct from `fail` (transport/execution crash).
+
+        The orchestrator retries `invalid` results by resending the same stage
+        with `error` injected as feedback, up to MAX_VALIDATION_RETRIES times.
+        """
+        parts: list[MessagePart] = [TextPart(text=error)]
+        if corrections:
+            parts.append(DataPart(data={"corrections": corrections}))
+        return cls(id=task_id, status="invalid", message=Message(role="agent", parts=parts))
 
 
 # ------------------------------------------------------------------ #

@@ -4,6 +4,8 @@ from concurrent.futures import TimeoutError as FuturesTimeoutError
 
 import yfinance as yf
 
+from shared.sanitize import sanitize_external_text
+
 _TIMEOUT = 15  # seconds per ticker
 
 _REC_KEY_MAP = {
@@ -77,8 +79,10 @@ def _fetch(ticker: str) -> dict:
             "sell": sell,
             "strong_sell": strong_sell,
         },
-        "sector": info.get("sector"),
-        "industry": info.get("industry"),
+        # sector/industry/longName are free-text fields sourced from Yahoo Finance's
+        # own metadata — externally influenceable, sanitized before reaching any prompt.
+        "sector": sanitize_external_text(info.get("sector"), max_len=100) or None,
+        "industry": sanitize_external_text(info.get("industry"), max_len=100) or None,
     }
 
 

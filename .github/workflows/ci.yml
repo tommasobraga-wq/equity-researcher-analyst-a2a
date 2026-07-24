@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Lint
+        run: uv run ruff check .
+
+      # start.sh requires a .env file; the agents only need a syntactically
+      # present key to start (smoke tests never trigger a real LLM call).
+      - name: Write .env for CI
+        run: echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY || 'sk-ant-ci-placeholder' }}" > .env
+
+      # test.sh starts all 5 agents (needed for tests/test_smoke.py), runs pytest,
+      # then stops them. Integration tests (real LLM calls) are excluded by default.
+      - name: Test
+        run: ./test.sh

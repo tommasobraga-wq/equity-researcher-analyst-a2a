@@ -11,17 +11,17 @@ dependencies = [
     # HTTP servers (every agent)
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",
-    # Anthropic — Orchestrator, Report Writer, shared
+    # Anthropic — used directly by all 5 agents (native ReAct loop + report writer)
     "anthropic>=0.40.0",
-    # OpenAI Agents SDK — Data Collector
-    "openai-agents>=0.0.7",
-    # Smolagents — News & Sentiment
-    "smolagents>=1.0.0",
-    # BeeAI — Fundamental Analyst, Risk Assessor
-    "beeai-framework>=0.1.0",
     # Financial data tools
     "feedparser>=6.0.12",
     "yfinance>=1.2.0",
+    # Audit trail storage
+    "asyncpg>=0.29.0",
+    # RAG (Compliance Agent — policy retrieval)
+    "pgvector>=0.3.0",
+    "voyageai>=0.3.0",
+    "pymupdf>=1.24.0",
     # Orchestrator
     "langgraph>=0.2.0",
     # Shared utilities
@@ -30,6 +30,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "rich>=13.0.0",
     "jinja2>=3.0.0",
+    "pyyaml>=6.0",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -58,6 +59,7 @@ line-length = 100
 select = ["E", "F", "I"]  # E=stile, F=errori logici, I=import ordinati
 
 [tool.ruff.lint.per-file-ignores]
-# prompt strings e firme BeeAI non spezzabili senza peggiorare la leggibilità
+# prompt strings lunghe non spezzabili senza peggiorare la leggibilità
 "agents/report-writer/agent.py" = ["E501"]
 "agents/risk-assessor/agent.py" = ["E501"]
+"agents/compliance-agent/agent.py" = ["E501"]
