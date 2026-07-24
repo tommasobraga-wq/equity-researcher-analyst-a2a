@@ -39,7 +39,9 @@ from shared.db import append_turn, get_or_create_session, load_recent_turns, loa
 from shared.eligibility import check_esg_exclusions, check_restricted_list
 from shared.log import get_logger
 from shared.models import Report
+from shared.portfolio import check_portfolio_limits, load_limits
 from shared.report import generate_html
+from shared.tools.yfinance_tool import get_daily_returns
 from shared.validators import validate_stage
 
 load_dotenv(Path(__file__).parent.parent / ".env")
@@ -55,6 +57,7 @@ AGENTS = {
     "risk_assessor":       "http://localhost:8004",
     "report_writer":       "http://localhost:8005",
     "compliance_agent":    "http://localhost:8006",
+    "portfolio_manager":   "http://localhost:8007",
 }
 
 MAX_VALIDATION_RETRIES = 2
@@ -84,6 +87,9 @@ class PipelineState(TypedDict):
     gate1_excluded: list[dict]  # tickers blocked by shared/eligibility.py (restricted list, ESG) before analysis
     compliance_flagged: list[dict]  # candidates blocked by ComplianceAgent (Gate 2, policy RAG)
     compliance_checked: bool  # True once ComplianceAgent has run for this state
+    allocation: list[dict]  # PM's proposed weights, already past Gate 3 when persisted clean
+    allocation_esclusi: list[dict]  # candidates the PM deliberately left at 0 weight
+    nota_strategia: str
     report: dict
     executive_summary: str
     qa_verdict: str
@@ -544,6 +550,88 @@ async def node_compliance_agent(state: PipelineState) -> dict:
     }
 
 
+async def _fetch_returns(tickers: list[str], lookback_days: int) -> dict[str, list[float]]:
+    """Best-effort price-history fetch for Gate 3's correlation check — a
+    yfinance hiccup degrades to a warning in check_portfolio_limits, it never
+    blocks an otherwise valid allocation."""
+    async def one(ticker: str) -> tuple[str, list[float]]:
+        try:
+            return ticker, await asyncio.to_thread(get_daily_returns, ticker, lookback_days)
+        except Exception:
+            return ticker, []
+    pairs = await asyncio.gather(*(one(t) for t in tickers))
+    return {t: r for t, r in pairs if r}
+
+
+async def node_portfolio_manager(state: PipelineState) -> dict:
+    """Portfolio Manager + Gate 3. The PM agent proposes weights; Gate 3
+    (shared/portfolio.py) then checks the aggregate limits deterministically
+    — concentration, pairwise correlation, drawdown proxy. A breach feeds the
+    violation text back to the PM through the standard validation-retry loop,
+    so the PM re-allocates instead of the pipeline failing outright."""
+    stage = "portfolio_manager"
+    limits = load_limits()
+    print(f"\n[+4] PortfolioManager ← {len(state['candidates'])} compliant candidate(s)")
+    feedback = state["validation_feedback"].get(stage, "")
+    result = await send_task_with_retry(
+        AGENTS["portfolio_manager"],
+        stage,
+        "Propose a portfolio allocation for the compliant candidates.",
+        data={
+            "candidates": state["candidates"],
+            "risk_assessment": state["risk_assessment"],
+            "fundamentals": state["fundamentals"],
+            "portfolio_limits": limits,
+            "validation_feedback": feedback,
+        },
+        timeout=300.0,
+    )
+    if result.status == "failed":
+        raise RuntimeError(f"PortfolioManager failed: {result.message.text()}")
+    if result.status == "invalid":
+        return _record_invalid(state, stage, result.message.text())
+
+    allocation = _extract_data(result, "allocation") or []
+    allocation_esclusi = _extract_data(result, "allocation_esclusi") or []
+    nota_strategia = _extract_data(result, "nota_strategia") or ""
+
+    _, violations = validate_stage("allocation", allocation)
+    errors = [v for v in violations if v.severity == "error"]
+    if errors:
+        return _record_invalid(state, stage, _feedback_text(errors))
+
+    # The PM may only drop a candidate by listing it in esclusi with a reason —
+    # a ticker silently missing from both lists is a malformed allocation.
+    covered = {e.get("ticker") for e in allocation} | {e.get("ticker") for e in allocation_esclusi}
+    missing = [c.get("ticker") for c in state["candidates"] if c.get("ticker") not in covered]
+    if missing:
+        return _record_invalid(
+            state, stage,
+            f"- [allocation_coverage] Candidati senza peso né motivo di esclusione: {', '.join(missing)}.",
+        )
+
+    # Gate 3 — deterministic aggregate limits.
+    lookback = int((limits.get("correlation") or {}).get("lookback_days", 180))
+    returns = await _fetch_returns([e["ticker"] for e in allocation], lookback)
+    gate3_violations = check_portfolio_limits(allocation, state["fundamentals"], returns, limits)
+    gate3_errors = [v for v in gate3_violations if v.severity == "error"]
+    for v in gate3_violations:
+        if v.severity == "warning":
+            print(f"      ℹ Gate 3: {v.message}")
+    if gate3_errors:
+        print(f"      ⚠ Gate 3: {len(gate3_errors)} limite/i di portafoglio violato/i — re-allocazione richiesta")
+        return _record_invalid(state, stage, _feedback_text(gate3_errors))
+
+    print(f"      → Allocation approved by Gate 3: {len(allocation)} position(s), "
+          f"{100 - sum(float(e['peso_pct']) for e in allocation):.1f}% cash")
+    return {
+        "allocation": allocation,
+        "allocation_esclusi": allocation_esclusi,
+        "nota_strategia": nota_strategia,
+        "retries": {**state["retries"], stage: 0},
+    }
+
+
 async def node_report_writer(state: PipelineState) -> dict:
     stage = "report_writer"
     print("\n[+3] ReportWriter ← generating final report")
@@ -557,6 +645,8 @@ async def node_report_writer(state: PipelineState) -> dict:
             "risk_assessment": state["risk_assessment"],
             "news": state["news"],
             "themes": state["themes"],
+            "allocation": state.get("allocation", []),
+            "nota_strategia": state.get("nota_strategia", ""),
             "validation_feedback": feedback,
         },
         timeout=300.0,
@@ -573,9 +663,20 @@ async def node_report_writer(state: PipelineState) -> dict:
     # Merge Gate 1/Gate 2 exclusions into candidati_esclusi deterministically —
     # in Python, not via the LLM prompt — so compliance-critical exclusion data
     # can never be dropped or reworded by report generation.
-    gate_excluded = [*state.get("gate1_excluded", []), *state.get("compliance_flagged", [])]
+    gate_excluded = [
+        *state.get("gate1_excluded", []),
+        *state.get("compliance_flagged", []),
+        *state.get("allocation_esclusi", []),
+    ]
     if gate_excluded:
         report["candidati_esclusi"] = [*report.get("candidati_esclusi", []), *gate_excluded]
+
+    # Same deterministic-merge rule for the allocation: the numbers Gate 3
+    # approved are copied into the report verbatim in Python — the LLM writes
+    # commentary around them but can never alter or drop a weight.
+    if state.get("allocation"):
+        report["allocazione"] = state["allocation"]
+        report["nota_allocazione"] = state.get("nota_strategia", "")
 
     try:
         report_model = Report(**report)
@@ -662,8 +763,10 @@ def _entry_router(state: PipelineState) -> str | list[str]:
     present in `state` — a fresh run starts at the node(s) matching
     `state["mode"]`, a resumed run (loaded from pipeline_runs) jumps straight
     to the first stage that hasn't completed yet."""
-    if state.get("compliance_checked"):
+    if state.get("allocation"):
         return "report_writer"
+    if state.get("compliance_checked"):
+        return "portfolio_manager"
     if state.get("risk_assessment"):
         return "compliance_agent"
     if state.get("candidates"):
@@ -687,6 +790,7 @@ def _build_graph() -> StateGraph:
     builder.add_node("fundamental_analyst", _with_persistence(node_fundamental_analyst, "fundamental_analyst"))
     builder.add_node("risk_assessor", _with_persistence(node_risk_assessor, "risk_assessor"))
     builder.add_node("compliance_agent", _with_persistence(node_compliance_agent, "compliance_agent"))
+    builder.add_node("portfolio_manager", _with_persistence(node_portfolio_manager, "portfolio_manager"))
     builder.add_node("report_writer", _with_persistence(node_report_writer, "report_writer"))
 
     builder.set_conditional_entry_point(_entry_router)
@@ -704,7 +808,8 @@ def _build_graph() -> StateGraph:
     )
     builder.add_conditional_edges("fundamental_analyst", _make_router("fundamental_analyst", "risk_assessor"))
     builder.add_conditional_edges("risk_assessor", _make_router("risk_assessor", "compliance_agent"))
-    builder.add_conditional_edges("compliance_agent", _make_router("compliance_agent", "report_writer"))
+    builder.add_conditional_edges("compliance_agent", _make_router("compliance_agent", "portfolio_manager"))
+    builder.add_conditional_edges("portfolio_manager", _make_router("portfolio_manager", "report_writer"))
     builder.add_conditional_edges("report_writer", _make_router("report_writer", END))
 
     return builder.compile()
@@ -767,6 +872,9 @@ async def run_pipeline(
             "gate1_excluded": gate1_excluded,
             "compliance_flagged": [],
             "compliance_checked": False,
+            "allocation": [],
+            "allocation_esclusi": [],
+            "nota_strategia": "",
             "report": {},
             "executive_summary": "",
             "qa_verdict": "",

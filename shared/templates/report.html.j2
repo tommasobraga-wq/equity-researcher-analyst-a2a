@@ -371,6 +371,37 @@
     {{ candidato_card(c) }}
   {% endfor %}
 
+  {% if report.allocazione %}
+  <h2>Allocazione di Portafoglio</h2>
+  <table class="alloc-table" style="width:100%;border-collapse:collapse">
+    <thead>
+      <tr>
+        <th style="text-align:left;padding:6px 8px;border-bottom:2px solid #ccc">Ticker</th>
+        <th style="text-align:right;padding:6px 8px;border-bottom:2px solid #ccc">Peso</th>
+        <th style="text-align:left;padding:6px 8px;border-bottom:2px solid #ccc">Razionale</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for a in report.allocazione %}
+      <tr>
+        <td style="padding:6px 8px;border-bottom:1px solid #eee"><strong>{{ a.ticker }}</strong></td>
+        <td style="text-align:right;padding:6px 8px;border-bottom:1px solid #eee">{{ "%.1f" | format(a.peso_pct) }}%</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #eee">{{ a.razionale }}</td>
+      </tr>
+      {% endfor %}
+      {% set cash = 100 - (report.allocazione | map(attribute="peso_pct") | sum) %}
+      <tr>
+        <td style="padding:6px 8px"><strong>Cash</strong></td>
+        <td style="text-align:right;padding:6px 8px">{{ "%.1f" | format(cash) }}%</td>
+        <td style="padding:6px 8px">Liquidità residua</td>
+      </tr>
+    </tbody>
+  </table>
+  {% if report.nota_allocazione %}
+  <div class="nota-box" style="margin-top:10px">{{ report.nota_allocazione }}</div>
+  {% endif %}
+  {% endif %}
+
   {% if report.nota_metodologica %}
   <h2>Nota Metodologica</h2>
   <div class="nota-box">{{ report.nota_metodologica }}</div>

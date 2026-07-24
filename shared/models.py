@@ -72,12 +72,20 @@ class Tema(_Mutable):
     indicatori_da_monitorare: list[str] = []
 
 
+class VoceAllocazione(_Mutable):
+    ticker: str = ""
+    peso_pct: float = 0.0
+    razionale: str = ""
+
+
 class Report(_Mutable):
     data_analisi: str = ""
     universo: str = ""
     temi: list[Tema] = []
     candidati: list[Candidato] = []
     candidati_esclusi: list[CandidatoEscluso] = []
+    allocazione: list[VoceAllocazione] = []
+    nota_allocazione: str = ""
     nota_metodologica: str = ""
 
 

@@ -10,6 +10,7 @@ AGENTS = {
     "risk-assessor":       {"port": 8004, "name": "RiskAssessor"},
     "report-writer":       {"port": 8005, "name": "ReportWriter"},
     "compliance-agent":    {"port": 8006, "name": "ComplianceAgent"},
+    "portfolio-manager":   {"port": 8007, "name": "PortfolioManager"},
 }
 
 

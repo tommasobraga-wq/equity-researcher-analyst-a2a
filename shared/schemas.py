@@ -72,6 +72,12 @@ class RiskScoring(_Lenient):
     totale: int = 0
 
 
+class AllocationItem(_Lenient):
+    ticker: str
+    peso_pct: float
+    razionale: str = ""
+
+
 class RiskItem(_Lenient):
     ticker: str
     scenarios: dict = {}

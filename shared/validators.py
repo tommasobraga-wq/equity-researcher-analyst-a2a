@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pydantic import BaseModel, ValidationError
 
 from shared.models import Report
-from shared.schemas import CandidateItem, FundamentalRecord, NewsThemesOutput, RiskItem
+from shared.schemas import AllocationItem, CandidateItem, FundamentalRecord, NewsThemesOutput, RiskItem
 
 
 @dataclass
@@ -209,11 +209,12 @@ _STAGE_SCHEMAS: dict[str, type[BaseModel]] = {
     "news_themes": NewsThemesOutput,
     "candidates": CandidateItem,
     "risk_assessment": RiskItem,
+    "allocation": AllocationItem,
     "report": Report,
 }
 
 # Stages whose payload is a bare JSON array, validated item-by-item.
-_LIST_STAGES = {"fundamentals", "candidates", "risk_assessment"}
+_LIST_STAGES = {"fundamentals", "candidates", "risk_assessment", "allocation"}
 
 
 def validate_stage(stage: str, payload) -> tuple[object | None, list[Violation]]:
@@ -279,5 +280,23 @@ def validate_stage(stage: str, payload) -> tuple[object | None, list[Violation]]
             if not matches:
                 violations.append(Violation(rule="score_arithmetic", severity="error", ticker=ticker,
                     message=f"{stage}: scoring.totale={scoring.totale} ma somma dimensioni={expected}."))
+
+    if stage == "allocation":
+        # Basic arithmetic sanity here (schema-level); the aggregate limit
+        # checks — concentration, correlation, drawdown — are Gate 3
+        # (shared/portfolio.py), which needs fundamentals/price history.
+        total_weight = 0.0
+        for item in parsed:
+            if not (0 < item.peso_pct <= 100):
+                violations.append(Violation(rule="allocation_weight_range", severity="error", ticker=item.ticker,
+                    message=f"{item.ticker}: peso_pct={item.peso_pct} fuori range (0, 100]."))
+            else:
+                total_weight += item.peso_pct
+            if not item.razionale.strip():
+                violations.append(Violation(rule="allocation_rationale", severity="error", ticker=item.ticker,
+                    message=f"{item.ticker}: razionale mancante per il peso assegnato."))
+        if total_weight > 100.01:
+            violations.append(Violation(rule="allocation_weights_sum", severity="error", ticker=None,
+                message=f"Somma dei pesi {total_weight:.1f}% > 100%."))
 
     return parsed, violations

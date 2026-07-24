@@ -97,6 +97,27 @@ def get_stock_fundamentals(ticker: str) -> dict:
         raise TimeoutError(f"yfinance timeout after {_TIMEOUT}s for {ticker}")
 
 
+def get_daily_returns(ticker: str, days: int = 180) -> list[float]:
+    """Daily close-to-close returns over the last `days` calendar days —
+    used by Gate 3's pairwise-correlation check. Raises on timeout/error;
+    the caller (orchestrator) treats failures as best-effort."""
+    ticker = ticker.strip().upper()
+
+    def _history() -> list[float]:
+        closes = yf.Ticker(ticker).history(period=f"{days}d")["Close"].tolist()
+        return [
+            curr / prev - 1
+            for prev, curr in zip(closes, closes[1:])
+            if prev
+        ]
+
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            return executor.submit(_history).result(timeout=_TIMEOUT)
+    except FuturesTimeoutError:
+        raise TimeoutError(f"yfinance history timeout after {_TIMEOUT}s for {ticker}")
+
+
 def get_stock_fundamentals_text(ticker: str) -> str:
     """Same as get_stock_fundamentals but returns a formatted string."""
     try:

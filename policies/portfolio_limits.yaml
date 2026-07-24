@@ -1,0 +1,28 @@
+# Gate 3 — limiti aggregati di portafoglio (deterministici, zero LLM).
+# Applicati dall'orchestratore all'allocazione proposta dal Portfolio Manager
+# (shared/portfolio.py::check_portfolio_limits). Violazioni "error" rimandano
+# l'allocazione al Portfolio Manager con feedback, come ogni altro retry di
+# validazione.
+
+# Peso massimo di una singola posizione (percentuale del portafoglio).
+max_position_weight_pct: 30
+
+# Peso massimo aggregato per settore (concentrazione settoriale).
+max_sector_weight_pct: 50
+
+# Numero massimo di posizioni in portafoglio.
+max_positions: 5
+
+# Drawdown proxy: distanza media ponderata dei prezzi correnti dal massimo a
+# 52 settimane. Un portafoglio i cui titoli quotano in media oltre questa
+# percentuale sotto i massimi è considerato in violazione del limite di
+# drawdown aggregato.
+max_weighted_drawdown_pct: 40
+
+# Correlazione: due posizioni con correlazione dei rendimenti giornalieri
+# superiore a max_pairwise non possono avere entrambe un peso >=
+# applies_above_weight_pct (diversificazione effettiva, non nominale).
+correlation:
+  max_pairwise: 0.85
+  applies_above_weight_pct: 15
+  lookback_days: 180

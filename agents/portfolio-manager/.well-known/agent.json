@@ -1,0 +1,13 @@
+{
+  "name": "PortfolioManager",
+  "version": "1.0.0",
+  "description": "Aggregates compliant equity candidates into a portfolio allocation (percent weights + rationale, implicit cash), reasoning over risk scoring and fundamentals within the aggregate Gate 3 limits (concentration, correlation, drawdown).",
+  "url": "http://localhost:8007",
+  "capabilities": ["portfolio_allocation", "risk_weighted_sizing"],
+  "input_schema": {
+    "candidates": "list — compliant equity candidates (post Gate 2)",
+    "risk_assessment": "list — risk scoring/scenarios from RiskAssessor",
+    "fundamentals": "list — fundamentals records from DataCollector",
+    "portfolio_limits": "dict — Gate 3 limits from policies/portfolio_limits.yaml"
+  }
+}

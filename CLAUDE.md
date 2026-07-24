@@ -11,13 +11,14 @@ uv sync
 # Run a single agent (example: data-collector on port 8001)
 uv run python agents/data-collector/agent.py
 
-# Run all 6 agents (each in a separate terminal)
+# Run all 7 agents (each in a separate terminal)
 uv run python agents/data-collector/agent.py      # :8001
 uv run python agents/news-sentiment/agent.py      # :8002
 uv run python agents/fundamental-analyst/agent.py # :8003
 uv run python agents/risk-assessor/agent.py       # :8004
 uv run python agents/report-writer/agent.py       # :8005
 uv run python agents/compliance-agent/agent.py    # :8006 — requires VOYAGE_API_KEY + DATABASE_URL (pgvector)
+uv run python agents/portfolio-manager/agent.py   # :8007
 
 # One-time (and after editing policies/docs/*.md): index policy documents for the Compliance Agent
 uv run python scripts/ingest_policies.py
@@ -49,7 +50,7 @@ curl http://localhost:8001/.well-known/agent.json
 
 This is an **A2A (Agent-to-Agent)** multi-agent equity research system. The CrewAI pipeline was decomposed into 6 independent FastAPI services that communicate via **JSON-RPC 2.0 over HTTP**. All agents but ReportWriter run on a single hand-rolled ReAct loop (`shared/react_agent.py`) built directly on the Anthropic SDK — the original per-agent framework split (OpenAI Agents SDK / Smolagents / BeeAI) was retired in favor of one shared, auditable tool-use loop; ReportWriter alone has no tool-use step and calls the Anthropic SDK directly for its two-step generate+QA flow.
 
-A **Portfolio Manager** agent and a portfolio-level Gate 3 (aggregate concentration/correlation/drawdown, downstream of the PM) are planned but not yet built — see Roadmap.
+A **Portfolio Manager** agent (port 8007) sits after Gate 2: it aggregates the compliant candidates into a portfolio allocation (percent weights + rationale, implicit cash), which **Gate 3** (`shared/portfolio.py`, deterministic) then checks against the aggregate limits in `policies/portfolio_limits.yaml` — per-position and per-sector concentration, max positions, weighted drawdown-from-52w-high proxy, and pairwise correlation of daily returns (yfinance history, best-effort: a missing series degrades to a warning, never blocks). A breach feeds the violation text back to the PM through the standard validation-retry loop (re-allocation), not a pipeline failure. The approved weights are merged into the final report (`allocazione`/`nota_allocazione`) deterministically in Python, same rule as the gate exclusions. The PM has no LLM-QA step: allocation correctness is fully checkable deterministically, so a second LLM pass adds cost without coverage.
 
 ### Coordinator (natural-language front end)
 
@@ -60,11 +61,11 @@ A **Portfolio Manager** agent and a portfolio-level Gate 3 (aggregate concentrat
 ```
 mode="specific" (tickers named by the user):
   Gate 1 (restricted list, run_pipeline) → data_news_parallel :8001+:8002 (concurrent, Gate 1 ESG check inline)
-    → fundamental_analyst :8003 → risk_assessor :8004 → compliance_agent :8006 (Gate 2, RAG) → report_writer :8005
+    → fundamental_analyst :8003 → risk_assessor :8004 → compliance_agent :8006 (Gate 2, RAG) → portfolio_manager :8007 (+ Gate 3) → report_writer :8005
 
 mode="discovery" (no tickers named — open-ended, e.g. "opportunità nel settore bancario europeo ora"):
   news_sentiment_discovery :8002 → Gate 1 (restricted list) → data_collector_from_candidates :8001 (Gate 1 ESG check inline)
-    → fundamental_analyst :8003 → risk_assessor :8004 → compliance_agent :8006 (Gate 2, RAG) → report_writer :8005
+    → fundamental_analyst :8003 → risk_assessor :8004 → compliance_agent :8006 (Gate 2, RAG) → portfolio_manager :8007 (+ Gate 3) → report_writer :8005
 ```
 
 `fundamental_analyst`/`risk_assessor`/`report_writer` are unchanged in both modes. The fork exists because DataCollector needs to know *which* tickers to fetch: in "specific" mode the user already named them, so DataCollector and NewsSentiment run concurrently (`node_data_news_parallel`, `asyncio.gather`); in "discovery" mode nothing is known yet, so NewsSentiment must run first and propose `candidate_tickers` (see NewsSentiment below) before DataCollector can run — necessarily sequential, and in reverse order from "specific" mode.
@@ -75,12 +76,14 @@ The orchestrator (`orchestrator/main.py`) uses **LangGraph** (`StateGraph`). Eac
 
 ### Compliance gates
 
-Two gates, both upstream of a future Portfolio Manager (not yet built — see Roadmap):
+Three gates:
 
 - **Gate 1 — eligibility filter** (`shared/eligibility.py`, deterministic, zero LLM cost, no new agent/port): `check_restricted_list()` matches ticker symbols against `policies/restricted_list.yaml` — runs once in `run_pipeline` for "specific" mode (before the graph starts) and inside `node_data_collector_from_candidates` for "discovery" mode (on `candidate_tickers`), since neither needs fundamentals data. `check_esg_exclusions()` matches each candidate's `sector`/`industry` against `esg_excluded_sectors` in the same policy file — runs inside `_collect_fundamentals` (shared by both topologies) right after DataCollector returns fundamentals, the earliest point sector data exists. Blocked entries accumulate in `state["gate1_excluded"]` (same shape as `shared/models.py::CandidatoEscluso`) and are never re-fetched/re-analyzed downstream.
 - **Gate 2 — Compliance Agent** (`agents/compliance-agent`, port 8006): runs after `risk_assessor`, before `report_writer` (not after the full pipeline including the report, to avoid generating a report on candidates that get blocked). Validates every candidate against internal policy documents retrieved via RAG (`shared/policy_store.py` — Voyage AI embeddings + pgvector). A "non-compliant" verdict is a legitimate outcome, not an agent error: `node_compliance_agent` partitions `candidates`/`risk_assessment` into compliant (proceed to `report_writer`) and flagged (accumulated in `state["compliance_flagged"]`), it never triggers the `invalid`/retry path for the verdict itself (only for malformed output, same as every other agent's QA).
 
-Both `gate1_excluded` and `compliance_flagged` are merged into the final report's `candidati_esclusi` deterministically in Python (`node_report_writer`, after receiving the report from ReportWriter) — not via the LLM prompt, so compliance-critical exclusion data can never be dropped or reworded by report generation.
+- **Gate 3 — portfolio limits** (`shared/portfolio.py`, deterministic, zero LLM cost): runs in `node_portfolio_manager` on the allocation the PM proposes. Limits live in `policies/portfolio_limits.yaml`. See the Portfolio Manager paragraph above for the full mechanics (violation → re-allocation retry, correlation best-effort).
+
+Both `gate1_excluded` and `compliance_flagged` (plus the PM's `allocation_esclusi`) are merged into the final report's `candidati_esclusi` deterministically in Python (`node_report_writer`, after receiving the report from ReportWriter) — not via the LLM prompt, so compliance-critical exclusion data can never be dropped or reworded by report generation.
 
 ### RAG (Compliance Agent policy retrieval)
 
@@ -125,6 +128,7 @@ Every agent follows the same pattern:
 | FundamentalAnalyst | `claude-haiku-4-5-20251001` |
 | RiskAssessor | `claude-haiku-4-5-20251001` |
 | ComplianceAgent | `claude-sonnet-5` (report) + `claude-sonnet-5` (QA) |
+| PortfolioManager | `claude-sonnet-5` (no separate QA — Gate 3 is deterministic) |
 | ReportWriter | `claude-sonnet-5` (report) + `claude-sonnet-5` (QA) |
 
 ### Shared tools
@@ -167,7 +171,6 @@ See `.env.example` for the full list. Requires `ANTHROPIC_API_KEY` in `.env` at 
 
 ## Roadmap
 
-- **Portfolio Manager agent + Gate 3**: aggregate portfolio-level checks (concentration, correlation, drawdown limits) downstream of a PM agent that aggregates compliant candidates and decides allocation — not yet built.
 - **v2 orchestrator**: migrate to LangGraph when the agent graph justifies it
 - **Model phase 2**: Gemini Flash for NewsSentiment (add `GOOGLE_API_KEY` to `.env`, change model_id only)
 - **Model phase 3**: Ollama local models via OpenAI-compatible endpoint (`http://localhost:11434/v1`)

@@ -98,6 +98,13 @@ def test_entry_router_resumes_after_risk_assessor():
 def test_entry_router_resumes_after_compliance_agent():
     state = {**_EMPTY_STAGES, "mode": "specific", "fundamentals": [{"ticker": "AAPL"}], "news": [{"id": "N1"}],
              "candidates": [{"ticker": "AAPL"}], "risk_assessment": [{"ticker": "AAPL"}], "compliance_checked": True}
+    assert om._entry_router(state) == "portfolio_manager"
+
+
+def test_entry_router_resumes_after_portfolio_manager():
+    state = {**_EMPTY_STAGES, "mode": "specific", "fundamentals": [{"ticker": "AAPL"}], "news": [{"id": "N1"}],
+             "candidates": [{"ticker": "AAPL"}], "risk_assessment": [{"ticker": "AAPL"}], "compliance_checked": True,
+             "allocation": [{"ticker": "AAPL", "peso_pct": 25.0, "razionale": "x"}]}
     assert om._entry_router(state) == "report_writer"
 
 

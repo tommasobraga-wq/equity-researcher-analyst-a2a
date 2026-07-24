@@ -186,6 +186,8 @@ async def run_agent(task: A2ATask) -> A2ATaskResult:
     risk_assessment = input_data.get("risk_assessment", [])
     news = input_data.get("news", [])
     themes = input_data.get("themes", [])
+    allocation = input_data.get("allocation", [])
+    nota_strategia = input_data.get("nota_strategia", "")
     feedback = input_data.get("validation_feedback", "")
 
     user_prompt = (
@@ -194,8 +196,16 @@ async def run_agent(task: A2ATask) -> A2ATaskResult:
         f"TEMI:\n{json.dumps(themes, ensure_ascii=False)}\n\n"
         f"CANDIDATI:\n{json.dumps(candidates, ensure_ascii=False)}\n\n"
         f"VALUTAZIONE RISCHI:\n{json.dumps(risk_assessment, ensure_ascii=False)}\n\n"
-        "Produci il report completo con le due sezioni, rispettando lo schema JSON fornito nel system prompt."
     )
+    if allocation:
+        user_prompt += (
+            f"ALLOCAZIONE DI PORTAFOGLIO (approvata dal Portfolio Manager — i pesi sono "
+            f"definitivi, puoi commentarli nella sintesi ma NON riportarli/modificarli nel JSON, "
+            f"vengono aggiunti a valle in modo deterministico):\n"
+            f"{json.dumps(allocation, ensure_ascii=False)}\n"
+            f"NOTA STRATEGIA: {nota_strategia}\n\n"
+        )
+    user_prompt += "Produci il report completo con le due sezioni, rispettando lo schema JSON fornito nel system prompt."
     if feedback:
         user_prompt += (
             f"\n\nATTENZIONE — TENTATIVO PRECEDENTE RESPINTO. Correggi questi problemi:\n{feedback}"
