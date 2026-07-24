@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# start.sh — avvia in cascata tutti e 5 gli agenti, poi mostra il comando per l'orchestratore.
+# start.sh — avvia in cascata tutti e 6 gli agenti, poi mostra il comando per l'orchestratore.
 # Uso:   ./start.sh
 # Stop:  ./start.sh stop
 
@@ -15,6 +15,7 @@ AGENTS=(
   "fundamental-analyst:8003"
   "risk-assessor:8004"
   "report-writer:8005"
+  "compliance-agent:8006"
 )
 
 HEALTH_RETRIES=20   # tentativi ogni 1s → max 20s per agente

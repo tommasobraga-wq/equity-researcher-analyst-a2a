@@ -1,0 +1,19 @@
+# Gate 1 — deterministic eligibility filter (shared/eligibility.py).
+# Separate from config.yaml's priority_sectors/excluded_sectors, which are
+# "soft" preferences fed into agent prompts, not a hard enforcement list.
+#
+# restricted_tickers: individual issuers blocked outright (e.g. legal/contractual
+# restrictions, insider-trading blackout windows, litigation holds).
+# esg_excluded_sectors: sector keywords matched case-insensitively against each
+# candidate's fundamentals (sector/industry fields) — same spirit as
+# excluded_sectors in config.yaml, but enforced as a hard block rather than a
+# prompt-level preference.
+
+restricted_tickers:
+  - ticker: RESTRICTEDCO
+    motivo: "Esempio dimostrativo — emittente in restricted list per litigation hold."
+
+esg_excluded_sectors:
+  - thermal coal
+  - tobacco
+  - controversial weapons

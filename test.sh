@@ -46,7 +46,7 @@ trap cleanup EXIT
 # ── pytest ────────────────────────────────────────────────────────────────────
 step "[ 2/3 ] Esecuzione test..."
 cd "$REPO_DIR"
-uv run pytest tests/ -v "${PYTEST_EXTRA_ARGS[@]}"
+uv run pytest tests/ -v ${PYTEST_EXTRA_ARGS[@]+"${PYTEST_EXTRA_ARGS[@]}"}
 PYTEST_EXIT=$?
 
 # ── esito ─────────────────────────────────────────────────────────────────────

@@ -1,0 +1,11 @@
+{
+  "name": "ComplianceAgent",
+  "version": "1.0.0",
+  "description": "Validates equity candidates against internal compliance policies (restricted list, ESG exclusions, concentration limits, disclosure requirements) via RAG retrieval over policy documents.",
+  "url": "http://localhost:8006",
+  "capabilities": ["policy_rag_validation", "restricted_list_check", "esg_exclusion_check"],
+  "input_schema": {
+    "candidates": "list — equity candidates from FundamentalAnalyst/RiskAssessor",
+    "risk_assessment": "list — risk scoring/scenarios from RiskAssessor"
+  }
+}
