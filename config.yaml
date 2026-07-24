@@ -1,0 +1,31 @@
+tickers:
+  - AAPL
+  - MSFT
+  - UCG.MI
+  - NVDA
+  - GOOGL
+  - AMZN
+
+priority_sectors:
+  - Technology
+  - AI
+  - Software
+  - Semiconductors
+  - Banking
+  - Financial Services
+  - Investment Banking
+  - Private Equity
+  - Asset Management
+
+excluded_sectors:
+  - energy
+  - utilities
+  - real estate
+  - REITs
+  - consumer staples
+  - industrials
+  - airlines
+  - transportation
+  - crypto
+  - DeFi
+  - Web3
