@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Equity Researcher A2A</title>
+<style>
+  :root {
+    --paper: #fafbfb; --panel: #ffffff; --ink: #182226; --ink-soft: #45565c;
+    --line: #dde5e7; --accent: #0e7490; --accent-soft: #e0eef2;
+    --gate: #b45309; --gate-soft: #fdf1e3; --err: #9f1239; --err-soft: #fbe7ec;
+    --ok: #4d7c0f;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #131a1d; --panel: #1a2327; --ink: #e4ebed; --ink-soft: #9db0b6;
+      --line: #2c383d; --accent: #4fb3cf; --accent-soft: #16333c;
+      --gate: #e0a458; --gate-soft: #33270f; --err: #f27e9d; --err-soft: #3a1622;
+      --ok: #8bbf4a;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(--sans); font-size: 15px; line-height: 1.5; }
+  .app { display: grid; grid-template-columns: minmax(340px, 1fr) minmax(380px, 1.1fr); grid-template-rows: auto 1fr; height: 100vh; }
+  header { grid-column: 1 / -1; display: flex; align-items: baseline; gap: 14px; padding: 14px 20px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  header h1 { font-size: 16px; font-weight: 650; margin: 0; }
+  header .sub { color: var(--ink-soft); font-size: 13px; }
+  #agents-dot { margin-left: auto; font-size: 13px; color: var(--ink-soft); }
+  #agents-dot .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--ink-soft); margin-right: 6px; }
+  #agents-dot.ok .dot { background: var(--ok); }
+  #agents-dot.bad .dot { background: var(--err); }
+
+  .chat { display: flex; flex-direction: column; border-right: 1px solid var(--line); min-height: 0; }
+  #messages { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 14px; }
+  .msg { max-width: 88%; padding: 10px 14px; border-radius: 10px; white-space: pre-wrap; }
+  .msg.user { align-self: flex-end; background: var(--accent-soft); }
+  .msg.bot { align-self: flex-start; background: var(--panel); border: 1px solid var(--line); }
+  .msg.err { align-self: flex-start; background: var(--err-soft); border: 1px solid var(--err); }
+  .msg .meta { font-family: var(--mono); font-size: 11px; color: var(--ink-soft); margin-bottom: 6px; letter-spacing: 0.06em; text-transform: uppercase; }
+  .msg .report-link { display: inline-block; margin-top: 8px; color: var(--accent); font-weight: 600; text-decoration: none; }
+  .msg .report-link:hover, .msg .report-link:focus { text-decoration: underline; }
+  form { display: flex; gap: 10px; padding: 14px 20px; border-top: 1px solid var(--line); background: var(--panel); }
+  input[type=text] { flex: 1; padding: 10px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); color: var(--ink); font-size: 15px; }
+  input[type=text]:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: transparent; }
+  button { padding: 10px 18px; border: 0; border-radius: 8px; background: var(--accent); color: #fff; font-size: 15px; font-weight: 600; cursor: pointer; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+  .trace { display: flex; flex-direction: column; min-height: 0; }
+  .trace-head { padding: 14px 20px 10px; border-bottom: 1px solid var(--line); }
+  .trace-head h2 { margin: 0 0 6px; font-size: 13px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-soft); font-weight: 650; }
+  #intent { font-family: var(--mono); font-size: 12.5px; color: var(--ink-soft); min-height: 18px; }
+  #intent .chip { display: inline-block; background: var(--accent-soft); color: var(--accent); border-radius: 5px; padding: 1px 7px; margin-right: 6px; }
+  #timeline { flex: 1; overflow-y: auto; padding: 16px 20px; }
+  .ev { display: flex; gap: 10px; padding: 7px 0; border-bottom: 1px dashed var(--line); font-size: 13.5px; }
+  .ev time { font-family: var(--mono); font-size: 11.5px; color: var(--ink-soft); white-space: nowrap; padding-top: 2px; }
+  .ev .body { flex: 1; }
+  .ev .stage { font-family: var(--mono); font-weight: 600; }
+  .badge { display: inline-block; font-family: var(--mono); font-size: 11px; border-radius: 5px; padding: 1px 7px; margin-left: 6px; vertical-align: 1px; }
+  .badge.run { background: var(--accent-soft); color: var(--accent); }
+  .badge.ok { background: transparent; color: var(--ok); border: 1px solid var(--ok); }
+  .badge.warn { background: var(--gate-soft); color: var(--gate); }
+  .badge.err { background: var(--err-soft); color: var(--err); }
+  .ev.gate { background: var(--gate-soft); border-radius: 8px; padding: 8px 10px; border-bottom: 0; margin: 4px 0; }
+  .ev.fail { background: var(--err-soft); border-radius: 8px; padding: 8px 10px; border-bottom: 0; margin: 4px 0; }
+  .ev ul { margin: 4px 0 0; padding-left: 18px; }
+  .ev .detail { color: var(--ink-soft); font-size: 12.5px; }
+  #report-frame { display: none; border: 0; border-top: 1px solid var(--line); width: 100%; height: 45%; background: #fff; }
+  .empty { color: var(--ink-soft); font-size: 13.5px; padding: 8px 0; }
+  @media (max-width: 860px) { .app { grid-template-columns: 1fr; grid-template-rows: auto 1fr 1fr; } .chat { border-right: 0; border-bottom: 1px solid var(--line); } }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>Equity Researcher A2A</h1>
+    <span class="sub">chat con l'orchestratore · trace live della pipeline</span>
+    <span id="agents-dot" title="Stato agenti"><span class="dot"></span><span id="agents-label">verifica agenti…</span></span>
+  </header>
+
+  <section class="chat" aria-label="Chat">
+    <div id="messages">
+      <div class="msg bot">Scrivi una richiesta in linguaggio naturale — ad esempio <em>«confrontami NVDA e AMD»</em> oppure <em>«opportunità nel settore bancario europeo ora»</em>. A destra vedrai ogni passo interno della pipeline mentre lavora.</div>
+    </div>
+    <form id="chat-form">
+      <input type="text" id="chat-input" placeholder="La tua richiesta…" autocomplete="off" aria-label="Richiesta">
+      <button type="submit" id="send-btn">Invia</button>
+    </form>
+  </section>
+
+  <section class="trace" aria-label="Trace pipeline">
+    <div class="trace-head">
+      <h2>Pipeline — passo per passo</h2>
+      <div id="intent"></div>
+    </div>
+    <div id="timeline"><div class="empty">Nessuna run attiva. La timeline si popola appena invii una richiesta.</div></div>
+    <iframe id="report-frame" title="Report finale"></iframe>
+  </section>
+</div>
+
+<script>
+const STAGE_LABELS = {
+  data_news_parallel: "DataCollector + NewsSentiment (parallelo)",
+  news_sentiment_discovery: "NewsSentiment (discovery)",
+  data_collector_from_candidates: "DataCollector (da candidati)",
+  fundamental_analyst: "FundamentalAnalyst",
+  risk_assessor: "RiskAssessor",
+  compliance_agent: "ComplianceAgent · Gate 2",
+  portfolio_manager: "PortfolioManager · Gate 3",
+  report_writer: "ReportWriter",
+};
+
+const messages = document.getElementById("messages");
+const timeline = document.getElementById("timeline");
+const intentBox = document.getElementById("intent");
+const form = document.getElementById("chat-form");
+const input = document.getElementById("chat-input");
+const sendBtn = document.getElementById("send-btn");
+const reportFrame = document.getElementById("report-frame");
+
+let sessionId = localStorage.getItem("era2a_session") || null;
+let currentRun = null;
+let source = null;
+
+function addMsg(cls, html, meta) {
+  const div = document.createElement("div");
+  div.className = "msg " + cls;
+  if (meta) div.innerHTML = '<div class="meta">' + meta + "</div>";
+  const body = document.createElement("div");
+  if (typeof html === "string") body.textContent = html; else body.appendChild(html);
+  div.appendChild(body);
+  messages.appendChild(div);
+  messages.scrollTop = messages.scrollHeight;
+  return div;
+}
+
+function fmtTime(ts) {
+  return new Date((ts || Date.now() / 1000) * 1000).toLocaleTimeString("it-IT");
+}
+
+function addEvent(ts, html, cls) {
+  const div = document.createElement("div");
+  div.className = "ev" + (cls ? " " + cls : "");
+  div.innerHTML = '<time>' + fmtTime(ts) + '</time><div class="body">' + html + "</div>";
+  timeline.appendChild(div);
+  timeline.scrollTop = timeline.scrollHeight;
+  return div;
+}
+
+function esc(s) {
+  const d = document.createElement("span"); d.textContent = String(s ?? ""); return d.innerHTML;
+}
+
+function listOf(items, fmt) {
+  return "<ul>" + items.map(i => "<li>" + fmt(i) + "</li>").join("") + "</ul>";
+}
+
+const openStages = {};
+
+function handleEvent(ev) {
+  switch (ev.type) {
+    case "stage_start": {
+      const label = STAGE_LABELS[ev.stage] || ev.stage;
+      openStages[ev.stage] = addEvent(ev.ts,
+        '<span class="stage">' + esc(label) + '</span><span class="badge run">in corso…</span>');
+      break;
+    }
+    case "stage_end": {
+      const node = openStages[ev.stage];
+      const badge = '<span class="badge ok">ok · ' + esc(ev.duration_s) + "s</span>";
+      if (node) node.querySelector(".badge").outerHTML = badge;
+      delete openStages[ev.stage];
+      break;
+    }
+    case "stage_retry":
+      addEvent(ev.ts,
+        '<span class="stage">' + esc(STAGE_LABELS[ev.stage] || ev.stage) + '</span>' +
+        '<span class="badge warn">retry ' + esc(ev.attempt) + "/" + esc(ev.max_retries) + '</span>' +
+        '<div class="detail">' + esc(ev.feedback) + "</div>", "gate");
+      break;
+    case "gate1_block":
+      addEvent(ev.ts,
+        '<span class="stage">Gate 1 · ' + (ev.check === "esg" ? "esclusioni ESG" : "restricted list") + '</span>' +
+        '<span class="badge warn">' + ev.blocked.length + " esclusi</span>" +
+        listOf(ev.blocked, b => "<strong>" + esc(b.ticker) + "</strong> — " + esc(b.motivo_esclusione)), "gate");
+      break;
+    case "gate2_flag":
+      addEvent(ev.ts,
+        '<span class="stage">Gate 2 · compliance</span>' +
+        '<span class="badge warn">' + ev.flagged.length + " non conformi</span>" +
+        listOf(ev.flagged, f => "<strong>" + esc(f.ticker) + "</strong> — " + esc(f.motivo_esclusione)), "gate");
+      break;
+    case "gate3_violation":
+      addEvent(ev.ts,
+        '<span class="stage">Gate 3 · limiti di portafoglio</span>' +
+        '<span class="badge warn">re-allocazione richiesta</span>' +
+        listOf(ev.violations, v => "<code>" + esc(v.rule) + "</code> " + esc(v.message)), "gate");
+      break;
+    case "circuit_open":
+      addEvent(ev.ts,
+        '<span class="stage">Circuit breaker</span><span class="badge err">aperto</span>' +
+        '<div class="detail">' + esc(ev.agent) + " — " + esc(ev.failures) + " errori consecutivi</div>", "fail");
+      break;
+    case "run_complete":
+    case "run_completed": {
+      addEvent(ev.ts, '<span class="stage">Run completata</span><span class="badge ok">' +
+        (ev.execution_seconds != null ? esc(Math.round(ev.execution_seconds / 60)) + "m " + esc(ev.execution_seconds % 60) + "s" : "ok") + "</span>");
+      finishRun(ev);
+      break;
+    }
+    case "run_failed":
+      addEvent(ev.ts, '<span class="stage">Run fallita</span><span class="badge err">errore</span>' +
+        '<div class="detail">' + esc(ev.error) + "</div>", "fail");
+      addMsg("err", "La pipeline è fallita: " + (ev.error || "errore sconosciuto"));
+      setBusy(false);
+      break;
+  }
+}
+
+function finishRun(ev) {
+  const wrap = document.createElement("div");
+  wrap.textContent = ev.executive_summary || "Report pronto.";
+  const link = document.createElement("a");
+  link.className = "report-link";
+  link.href = "/api/report/" + currentRun;
+  link.target = "_blank";
+  link.textContent = "Apri il report completo ↗";
+  wrap.appendChild(document.createElement("br"));
+  wrap.appendChild(link);
+  addMsg("bot", wrap, "Sintesi esecutiva" + (ev.qa_verdict && ev.qa_verdict.includes("APPROVATO") ? " · QA approvato" : ""));
+  reportFrame.src = "/api/report/" + currentRun;
+  reportFrame.style.display = "block";
+  setBusy(false);
+}
+
+function setBusy(busy) {
+  sendBtn.disabled = busy;
+  input.disabled = busy;
+  if (!busy) input.focus();
+}
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const text = input.value.trim();
+  if (!text) return;
+  addMsg("user", text);
+  input.value = "";
+  setBusy(true);
+  timeline.innerHTML = "";
+  reportFrame.style.display = "none";
+  intentBox.innerHTML = "";
+
+  let resp;
+  try {
+    resp = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, session_id: sessionId }),
+    });
+  } catch (err) {
+    addMsg("err", "Gateway non raggiungibile: " + err);
+    setBusy(false);
+    return;
+  }
+  if (!resp.ok) {
+    const detail = (await resp.json().catch(() => ({}))).detail || resp.statusText;
+    addMsg("err", "Richiesta rifiutata: " + detail);
+    setBusy(false);
+    return;
+  }
+  const data = await resp.json();
+  currentRun = data.run_id;
+  if (data.session_id) { sessionId = data.session_id; localStorage.setItem("era2a_session", sessionId); }
+
+  const it = data.intent;
+  intentBox.innerHTML =
+    '<span class="chip">mode: ' + esc(it.mode) + "</span>" +
+    (it.tickers.length ? '<span class="chip">' + esc(it.tickers.join(" ")) + "</span>" : "") +
+    (it.focus ? '<span class="chip">focus: ' + esc(it.focus) + "</span>" : "");
+  addEvent(null, '<span class="stage">Coordinator</span><span class="badge ok">intent interpretato</span>' +
+    '<div class="detail">mode=' + esc(it.mode) + (it.tickers.length ? " · tickers=" + esc(it.tickers.join(", ")) : "") +
+    (it.focus ? " · focus=" + esc(it.focus) : "") + "</div>");
+
+  if (source) source.close();
+  source = new EventSource("/api/stream/" + currentRun);
+  source.onmessage = (msg) => handleEvent(JSON.parse(msg.data));
+  source.onerror = () => { /* la chiusura a fine run è attesa */ source.close(); };
+});
+
+async function pollAgents() {
+  const dot = document.getElementById("agents-dot");
+  const label = document.getElementById("agents-label");
+  try {
+    const data = await (await fetch("/api/health")).json();
+    const up = data.agents.filter(a => a.ok).length;
+    dot.className = data.all_ok ? "ok" : "bad";
+    label.textContent = "agenti " + up + "/" + data.agents.length;
+    dot.title = data.agents.map(a => (a.ok ? "✓ " : "✗ ") + a.agent).join("\n");
+  } catch { label.textContent = "gateway offline?"; }
+}
+pollAgents();
+setInterval(pollAgents, 15000);
+input.focus();
+</script>
+</body>
+</html>

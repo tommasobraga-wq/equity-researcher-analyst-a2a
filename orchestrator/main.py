@@ -14,6 +14,7 @@ grafo con due topologie scelte dinamicamente in base al prompt utente:
       → fundamental_analyst (8003) → risk_assessor (8004) → report_writer (8005)
 """
 import asyncio
+import contextvars
 import json
 import os
 import sys
@@ -37,6 +38,7 @@ from shared.audit import log_event
 from shared.auth import enforce_secret_policy, sign, verify
 from shared.db import append_turn, get_or_create_session, load_recent_turns, load_run_state, save_run_state
 from shared.eligibility import check_esg_exclusions, check_restricted_list
+from shared.events import emit, end_stream
 from shared.log import get_logger
 from shared.models import Report
 from shared.portfolio import check_portfolio_limits, load_limits
@@ -61,6 +63,11 @@ AGENTS = {
 }
 
 MAX_VALIDATION_RETRIES = 2
+
+# The run_id of the pipeline currently executing in this task tree — lets
+# code without access to PipelineState (e.g. the circuit breaker) emit events
+# for the right run even when the gateway runs several pipelines concurrently.
+_current_run_id: contextvars.ContextVar[str | None] = contextvars.ContextVar("run_id", default=None)
 
 
 def _feedback_text(violations) -> str:
@@ -207,6 +214,7 @@ def _circuit_record_failure(agent_name: str) -> None:
     state["failures"] += 1
     if state["failures"] >= _CIRCUIT_FAILURE_THRESHOLD and state["opened_at"] is None:
         state["opened_at"] = time.time()
+        emit(_current_run_id.get(), "circuit_open", agent=agent_name, failures=state["failures"])
         _logger.warning(
             f"Circuit opened for {agent_name} after {state['failures']} consecutive failures",
             extra={"agent": agent_name, "event_type": "circuit_open"},
@@ -260,6 +268,8 @@ def _record_invalid(state: PipelineState, stage: str, feedback: str) -> dict:
     LangGraph's partial-state merge keeps whatever was there before."""
     retries = state["retries"].get(stage, 0) + 1
     print(f"      ⚠ Validation failed (attempt {retries}/{MAX_VALIDATION_RETRIES}): {feedback}")
+    emit(state.get("run_id"), "stage_retry", stage=stage, attempt=retries,
+         max_retries=MAX_VALIDATION_RETRIES, feedback=feedback)
     _logger.warning(
         f"Validation failed (attempt {retries}/{MAX_VALIDATION_RETRIES}): {feedback}",
         extra={"agent": stage, "event_type": "validation_failed"},
@@ -308,6 +318,7 @@ async def _collect_fundamentals(state: PipelineState, tickers: list[str], stage:
     eligible_fundamentals, esg_blocked = check_esg_exclusions(fundamentals)
     if esg_blocked:
         print(f"      ⚠ Gate 1 (ESG): {len(esg_blocked)} ticker(s) blocked — {', '.join(b['ticker'] for b in esg_blocked)}")
+        emit(state.get("run_id"), "gate1_block", check="esg", blocked=esg_blocked)
 
     print(f"      → {len(eligible_fundamentals)} ticker(s) fetched")
     return {
@@ -420,6 +431,7 @@ async def node_data_collector_from_candidates(state: PipelineState) -> dict:
     eligible_tickers, restricted_blocked = check_restricted_list(tickers)
     if restricted_blocked:
         print(f"      ⚠ Gate 1 (restricted list): {len(restricted_blocked)} candidate ticker(s) blocked")
+        emit(state.get("run_id"), "gate1_block", check="restricted_list", blocked=restricted_blocked)
     if not eligible_tickers:
         raise RuntimeError("All candidate tickers were blocked by Gate 1 (restricted list) — nothing left to analyze.")
 
@@ -539,6 +551,7 @@ async def node_compliance_agent(state: PipelineState) -> dict:
     ]
     if newly_flagged:
         print(f"      ⚠ Gate 2: {len(newly_flagged)} candidate(s) flagged non-compliant — {', '.join(f['ticker'] for f in newly_flagged)}")
+        emit(state.get("run_id"), "gate2_flag", flagged=newly_flagged)
 
     print(f"      → {len(compliant_candidates)}/{len(state['candidates'])} candidate(s) compliant")
     return {
@@ -620,6 +633,8 @@ async def node_portfolio_manager(state: PipelineState) -> dict:
             print(f"      ℹ Gate 3: {v.message}")
     if gate3_errors:
         print(f"      ⚠ Gate 3: {len(gate3_errors)} limite/i di portafoglio violato/i — re-allocazione richiesta")
+        emit(state.get("run_id"), "gate3_violation",
+             violations=[v.as_dict() for v in gate3_errors])
         return _record_invalid(state, stage, _feedback_text(gate3_errors))
 
     print(f"      → Allocation approved by Gate 3: {len(allocation)} position(s), "
@@ -751,9 +766,16 @@ def _with_persistence(node_fn, stage: str):
     whole pipeline. Best-effort (see shared/db.py::save_run_state): a save
     failure never breaks the pipeline itself."""
     async def wrapped(state: PipelineState) -> dict:
+        emit(state.get("run_id"), "stage_start", stage=stage)
+        t0 = time.perf_counter()
         result = await node_fn(state)
         merged = {**state, **result}
         await save_run_state(state["run_id"], state["tickers"], "running", stage, merged)
+        # A retry pass through the same node still emits stage_end — the UI
+        # distinguishes it because a stage_retry event precedes it.
+        emit(state.get("run_id"), "stage_end", stage=stage,
+             duration_s=round(time.perf_counter() - t0, 1),
+             clean=all(v == 0 for v in merged.get("retries", {}).values()))
         return result
     return wrapped
 
@@ -829,6 +851,8 @@ async def run_pipeline(
     excluded_sectors: list[str],
     focus: str = "",
     resume_run_id: str | None = None,
+    run_id: str | None = None,
+    open_browser: bool = True,
 ) -> dict:
     print("\n" + "=" * 60)
     print("  EQUITY RESEARCHER A2A — LangGraph Pipeline v2")
@@ -857,7 +881,7 @@ async def run_pipeline(
                 raise RuntimeError("All requested tickers were blocked by Gate 1 (restricted list).")
 
         initial_state = {
-            "run_id": str(uuid.uuid4()),
+            "run_id": run_id or str(uuid.uuid4()),
             "mode": mode,
             "tickers": tickers,
             "candidate_tickers": [],
@@ -883,12 +907,18 @@ async def run_pipeline(
         }
     run_id = initial_state["run_id"]
     print(f"      → run_id: {run_id} (mode={initial_state['mode']})")
+    _current_run_id.set(run_id)
+    if initial_state.get("gate1_excluded"):
+        # The "specific"-mode restricted-list check ran before run_id existed.
+        emit(run_id, "gate1_block", check="restricted_list", blocked=initial_state["gate1_excluded"])
 
     t0 = time.time()
     try:
         final_state = await _graph.ainvoke(initial_state)
-    except Exception:
+    except Exception as e:
         await save_run_state(run_id, initial_state["tickers"], "failed", "unknown", initial_state)
+        emit(run_id, "run_failed", error=str(e))
+        end_stream(run_id)
         raise
     execution_seconds = int(time.time() - t0)
     await save_run_state(run_id, final_state["tickers"], "completed", "report_writer", final_state)
@@ -916,7 +946,16 @@ async def run_pipeline(
             print(f"  ⚠  {len(errors)} errore/i critico/i nel report")
         if warnings:
             print(f"  ℹ  {len(warnings)} avvertimento/i di qualità")
-    webbrowser.open(report_path.as_uri())
+    if open_browser:
+        webbrowser.open(report_path.as_uri())
+
+    emit(run_id, "run_complete",
+         report_path=str(report_path),
+         executive_summary=final_state["executive_summary"],
+         qa_verdict=final_state["qa_verdict"],
+         execution_seconds=execution_seconds,
+         analyzed_tickers=analyzed_tickers)
+    end_stream(run_id)
 
     return {
         "status": "completed",

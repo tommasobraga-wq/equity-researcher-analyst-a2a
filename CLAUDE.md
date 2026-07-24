@@ -26,6 +26,9 @@ uv run python scripts/ingest_policies.py
 # Interactive natural-language coordinator (requires all agents running) — multi-turn REPL
 uv run python orchestrator/main.py
 
+# Web UI — chat + live step-by-step pipeline trace on http://localhost:8000
+uv run uvicorn gateway.app:app --port 8000
+
 # Resume a specific/new conversation session
 uv run python orchestrator/main.py --session <session_id>
 uv run python orchestrator/main.py --new-session
@@ -90,6 +93,12 @@ Both `gate1_excluded` and `compliance_flagged` (plus the PM's `allocation_esclus
 `shared/policy_store.py`: `ingest_documents()` chunks (paragraph-level) and embeds (Voyage AI, `voyage-3`, `input_type="document"`) every file in `policies/docs/*.md` into the `policy_chunks` pgvector table (`shared/db.py::get_vector_pool`/`_VECTOR_SCHEMA`); `search_policy()` embeds a query (`input_type="query"`) and returns the nearest chunks by cosine distance, each citable via its `source` document. Re-run `scripts/ingest_policies.py` after editing `policies/docs/*.md` — ingestion replaces any existing chunks for a given source file. The Compliance Agent exposes this as a `search_policy` tool in its ReAct loop.
 
 `get_vector_pool()` is deliberately **not** best-effort like the rest of `shared/db.py`: a missing `DATABASE_URL`/`VOYAGE_API_KEY` or a Postgres without the `vector` extension raises immediately (both at `agents/compliance-agent/agent.py` import time via `_enforce_rag_config()`, and on first retrieval) rather than letting the Compliance Agent silently run with retrieval disabled — skipping a compliance check unnoticed would be dangerous, unlike audit logging or conversation memory degrading to a no-op.
+
+### Web gateway (`gateway/`)
+
+`gateway/app.py` (port 8000) is the graphical front end: a FastAPI service that runs the orchestrator **in-process** (imports `run_pipeline`/`interpret_prompt` directly — the browser never talks to the agents). `POST /api/chat` interprets the prompt, starts the pipeline as a background task and returns `{run_id, session_id, intent}`; `GET /api/stream/{run_id}` streams live pipeline events over SSE; `GET /api/report/{run_id}` serves the final HTML report for the inline iframe; `GET /api/health` fans out to the 7 agents' `/health`. The single-page frontend (`gateway/static/index.html`, vanilla JS) shows the chat on the left and a step-by-step run timeline on the right (stages with durations, gate 1/2/3 events with excluded tickers/violations, retries with feedback, circuit-breaker openings).
+
+Events come from `shared/events.py` — an in-memory per-run asyncio.Queue bus. `emit()` is a no-op when nobody subscribed, so the REPL/`--tickers` paths are unaffected; the orchestrator emits from `_with_persistence` (stage_start/stage_end for every node), `_record_invalid` (stage_retry), the gate blocks, and the circuit breaker (via the `_current_run_id` ContextVar, since it has no state access). `run_pipeline` accepts `run_id=` (so the gateway can subscribe before the graph starts) and `open_browser=` (gateway passes False).
 
 ### Conversation memory (cross-session + multi-turn)
 
