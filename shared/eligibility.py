@@ -48,6 +48,93 @@ def check_restricted_list(tickers: list[str]) -> tuple[list[str], list[dict[str,
     return eligible, blocked
 
 
+# Geographic perimeter: US + EU-27 only (UK/LSE and Switzerland explicitly out,
+# per the domain constraint "US and EU equities only"). Classification is by
+# issuer DOMICILE (yfinance `country`), not listing venue — a US-listed ADR of a
+# UK issuer (e.g. AZN on NYSE, market="us_market", country="United Kingdom") must
+# be excluded, while an EU issuer trading as a US ADR (e.g. SAP/STM on NYSE,
+# country="Germany"/"Netherlands") stays in. `market` is only a fallback when
+# `country` is absent.
+_ALLOWED_COUNTRIES = {c.lower() for c in (
+    "United States",
+    "Austria", "Belgium", "Bulgaria", "Croatia", "Cyprus", "Czechia", "Czech Republic",
+    "Denmark", "Estonia", "Finland", "France", "Germany", "Greece", "Hungary", "Ireland",
+    "Italy", "Latvia", "Lithuania", "Luxembourg", "Malta", "Netherlands", "Poland",
+    "Portugal", "Romania", "Slovakia", "Slovenia", "Spain", "Sweden",
+)}
+# ISO-ish country codes as they appear in yfinance's `market` field ("<cc>_market").
+_ALLOWED_MARKET_CC = {
+    "us", "at", "be", "bg", "hr", "cy", "cz", "dk", "ee", "fi", "fr", "de", "gr", "hu",
+    "ie", "it", "lv", "lt", "lu", "mt", "nl", "pl", "pt", "ro", "sk", "si", "es", "se",
+}
+
+
+def check_market_perimeter(
+    fundamentals: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    """Splits `fundamentals` into (eligible, excluded) by geographic perimeter:
+    only US/EU-27-domiciled issuers pass. Deterministic Gate 1 check — replaces
+    reliance on the LLM to honor the "US and EU only, UK/LSE excluded" rule
+    (which leaked, e.g. AstraZeneca's US-listed ADR). Blocked entries use the
+    CandidatoEscluso shape for merging into the final report's candidati_esclusi."""
+    eligible: list[dict[str, Any]] = []
+    excluded: list[dict[str, str]] = []
+    for record in fundamentals:
+        country = (record.get("country") or "").strip()
+        market = (record.get("market") or "").strip().lower()
+
+        if country:
+            in_perimeter = country.lower() in _ALLOWED_COUNTRIES
+            reason = f"Fuori perimetro US/EU: emittente domiciliato in {country}."
+        elif market.endswith("_market"):
+            in_perimeter = market[: -len("_market")] in _ALLOWED_MARKET_CC
+            reason = f"Fuori perimetro US/EU: quotazione sul mercato '{market}'."
+        else:
+            in_perimeter = False  # can't determine domicile/venue → exclude conservatively
+            reason = "Perimetro US/EU non determinabile (paese e mercato mancanti nei dati)."
+
+        if in_perimeter:
+            eligible.append(record)
+        else:
+            excluded.append({"ticker": record.get("ticker", ""), "motivo_esclusione": reason})
+    return eligible, excluded
+
+
+def check_data_quality(
+    fundamentals: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    """Splits `fundamentals` records into (eligible, dropped). A record is
+    dropped when it has no usable price (``price`` missing, non-numeric, or
+    ``<= 0``) — i.e. the symbol did not resolve to a real, priced equity
+    (invalid/misspelled ticker, delisted, or no market data on yfinance).
+
+    Deterministic, zero LLM cost — the same "drop it, don't process it" spirit
+    as the restricted-list/ESG checks. Both pipeline topologies converge on the
+    shared DataCollector node, so filtering here covers user-supplied tickers
+    ("specific" mode) and NewsSentiment-proposed candidates ("discovery" mode)
+    alike. Blocked entries use the CandidatoEscluso shape so they can be merged
+    straight into the final report's candidati_esclusi."""
+    eligible: list[dict[str, Any]] = []
+    dropped: list[dict[str, str]] = []
+    for record in fundamentals:
+        price = record.get("price")
+        try:
+            usable = price is not None and float(price) > 0
+        except (TypeError, ValueError):
+            usable = False
+        if usable:
+            eligible.append(record)
+        else:
+            dropped.append({
+                "ticker": record.get("ticker", ""),
+                "motivo_esclusione": (
+                    "Dati fondamentali non disponibili (prezzo mancante) — "
+                    "ticker non risolto a un'azione quotata."
+                ),
+            })
+    return eligible, dropped
+
+
 def check_esg_exclusions(
     fundamentals: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:

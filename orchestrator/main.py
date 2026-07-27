@@ -37,7 +37,12 @@ from shared.a2a_models import A2ATaskResult, JsonRpcRequest, JsonRpcResponse
 from shared.audit import log_event
 from shared.auth import enforce_secret_policy, sign, verify
 from shared.db import append_turn, get_or_create_session, load_recent_turns, load_run_state, save_run_state
-from shared.eligibility import check_esg_exclusions, check_restricted_list
+from shared.eligibility import (
+    check_data_quality,
+    check_esg_exclusions,
+    check_market_perimeter,
+    check_restricted_list,
+)
 from shared.events import emit, end_stream
 from shared.log import get_logger
 from shared.models import Report
@@ -311,19 +316,44 @@ async def _collect_fundamentals(state: PipelineState, tickers: list[str], stage:
     if errors:
         return _record_invalid(state, stage, _feedback_text(errors))
 
+    # Gate 1 (data quality) — drop tickers that didn't resolve to a real priced
+    # equity (null/invalid price). Deterministic, symmetric across both
+    # topologies: catches misspelled/bogus candidate tickers from NewsSentiment
+    # ("discovery") and bad user-supplied tickers ("specific") alike, instead of
+    # letting a single data-less ticker bounce the whole batch through the
+    # DataCollector QA retry loop into a hard fail.
+    priced_fundamentals, data_dropped = check_data_quality(fundamentals)
+    if data_dropped:
+        print(f"      ⚠ Gate 1 (dati): {len(data_dropped)} ticker(s) scartati — {', '.join(b['ticker'] for b in data_dropped)}")
+        emit(state.get("run_id"), "gate1_block", check="data_quality", blocked=data_dropped)
+
+    # Gate 1 (geographic perimeter) — US/EU-27 issuers only (UK/LSE, CH, non-EU out),
+    # classified by issuer domicile (yfinance `country`). Deterministic replacement
+    # for relying on the LLM to honor "US and EU only", which leaked (e.g. AZN's US ADR).
+    perimeter_fundamentals, geo_blocked = check_market_perimeter(priced_fundamentals)
+    if geo_blocked:
+        print(f"      ⚠ Gate 1 (perimetro US/EU): {len(geo_blocked)} ticker(s) esclusi — {', '.join(b['ticker'] for b in geo_blocked)}")
+        emit(state.get("run_id"), "gate1_block", check="market_perimeter", blocked=geo_blocked)
+
     # Gate 1 (ESG) — needs sector/industry, only available now that fundamentals
     # are fetched. Blocked entries are folded into gate1_excluded (which already
     # carries any earlier restricted-list blocks from the caller's state) so
     # nothing downstream sees an excluded ticker again.
-    eligible_fundamentals, esg_blocked = check_esg_exclusions(fundamentals)
+    eligible_fundamentals, esg_blocked = check_esg_exclusions(perimeter_fundamentals)
     if esg_blocked:
         print(f"      ⚠ Gate 1 (ESG): {len(esg_blocked)} ticker(s) blocked — {', '.join(b['ticker'] for b in esg_blocked)}")
         emit(state.get("run_id"), "gate1_block", check="esg", blocked=esg_blocked)
 
+    if not eligible_fundamentals:
+        raise RuntimeError(
+            "Nessun candidato con dati fondamentali validi dopo i filtri Gate 1 "
+            "(dati mancanti / perimetro US-EU / ESG) — nulla da analizzare."
+        )
+
     print(f"      → {len(eligible_fundamentals)} ticker(s) fetched")
     return {
         "fundamentals": eligible_fundamentals,
-        "gate1_excluded": [*state.get("gate1_excluded", []), *esg_blocked],
+        "gate1_excluded": [*state.get("gate1_excluded", []), *data_dropped, *geo_blocked, *esg_blocked],
         "retries": {**state["retries"], stage: 0},
     }
 
@@ -428,12 +458,23 @@ async def node_data_collector_from_candidates(state: PipelineState) -> dict:
     NewsSentiment proposed in stage 1 — after Gate 1's restricted-list check
     (pure ticker match, no fundamentals needed for this part of Gate 1)."""
     tickers = state.get("candidate_tickers") or []
+    # Distinguish "NewsSentiment proposed nothing" from "everything proposed was
+    # blocked by the restricted list" — same dead-end, but very different causes,
+    # so the operator/UI sees which one actually happened.
+    if not tickers:
+        raise RuntimeError(
+            "NewsSentiment non ha proposto alcun candidate ticker da analizzare "
+            "(nessuna opportunità azionaria identificata nelle notizie correnti)."
+        )
     eligible_tickers, restricted_blocked = check_restricted_list(tickers)
     if restricted_blocked:
         print(f"      ⚠ Gate 1 (restricted list): {len(restricted_blocked)} candidate ticker(s) blocked")
         emit(state.get("run_id"), "gate1_block", check="restricted_list", blocked=restricted_blocked)
     if not eligible_tickers:
-        raise RuntimeError("All candidate tickers were blocked by Gate 1 (restricted list) — nothing left to analyze.")
+        raise RuntimeError(
+            "Tutti i candidate ticker proposti da NewsSentiment sono in restricted list "
+            "(Gate 1) — nulla da analizzare."
+        )
 
     print(f"\n[2/5] DataCollector (from candidates) ← {', '.join(eligible_tickers)}")
     augmented_state = {**state, "gate1_excluded": [*state.get("gate1_excluded", []), *restricted_blocked]}

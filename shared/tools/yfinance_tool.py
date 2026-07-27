@@ -83,6 +83,11 @@ def _fetch(ticker: str) -> dict:
         # own metadata — externally influenceable, sanitized before reaching any prompt.
         "sector": sanitize_external_text(info.get("sector"), max_len=100) or None,
         "industry": sanitize_external_text(info.get("industry"), max_len=100) or None,
+        # Geographic-perimeter fields (Gate 1, shared/eligibility.py::check_market_perimeter).
+        # `country` = issuer domicile (e.g. "United Kingdom" even for a US-listed ADR);
+        # `market` = listing venue country code (e.g. "us_market", "de_market", "gb_market").
+        "country": sanitize_external_text(info.get("country"), max_len=60) or None,
+        "market": sanitize_external_text(info.get("market"), max_len=40) or None,
     }
 
 
