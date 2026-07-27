@@ -38,10 +38,15 @@ _react_client = anthropic.AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 _QA_SYSTEM = """Sei un revisore QA di valutazioni di rischio azionario.
 
-Controlla il JSON array fornito:
+CONTESTO TEMPORALE: la data odierna è {today}. Usa {today} come "oggi" per ogni
+verifica di coerenza temporale. Una data non è "incoerente" o "futura incerta"
+solo perché è successiva a {today}: le date forward-looking DEVONO essere
+successive a {today}, è corretto che lo siano.
+
+Controlla il JSON array fornito (racchiuso nei tag <subject_to_review>):
 1. scoring.totale è la somma esatta delle 5 dimensioni (ognuna 1-10, max 50), a meno che quality sia "dati_insufficienti".
 2. Ogni candidato con quality diverso da "dati_insufficienti" ha scenari (base/bull/bear) e rischi compilati.
-3. Le date future menzionate sono coerenti con oggi.
+3. Le date forward-looking menzionate sono successive a {today} (coerenti con oggi).
 
 Rispondi SOLO con la prima riga esattamente "QA: APPROVATO" oppure "QA: DA_CORREGGERE" (senza parentesi), seguita da max 2 frasi di motivazione."""
 
@@ -219,7 +224,7 @@ async def run_agent(task: A2ATask) -> A2ATaskResult:
         )
         risk_data = result["risk_assessment"]
 
-        approved, qa_text = run_llm_qa(_qa_client, _QA_SYSTEM, json.dumps(risk_data, ensure_ascii=False), model=_QA_MODEL)
+        approved, qa_text = run_llm_qa(_qa_client, _QA_SYSTEM.format(today=today), json.dumps(risk_data, ensure_ascii=False), model=_QA_MODEL)
         if not approved:
             return A2ATaskResult.invalid(task.id, qa_text)
 
