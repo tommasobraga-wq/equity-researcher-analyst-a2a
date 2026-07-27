@@ -166,13 +166,14 @@ async def run_agent(task: A2ATask) -> A2ATaskResult:
 
     system = _INSTRUCTIONS.format(today=today)
     prompt = (
-        f"EQUITY CANDIDATES:\n{json.dumps(candidates, ensure_ascii=False)}\n\n"
-        f"RISK ASSESSMENT:\n{json.dumps(risk_assessment, ensure_ascii=False)}\n\n"
+        f"EQUITY CANDIDATES:\n<equity_candidates>\n{json.dumps(candidates, ensure_ascii=False)}\n</equity_candidates>\n\n"
+        f"RISK ASSESSMENT:\n<risk_assessment>\n{json.dumps(risk_assessment, ensure_ascii=False)}\n</risk_assessment>\n\n"
         "Now check each candidate against internal compliance policies via search_policy."
     )
     if feedback:
         prompt += (
-            f"\n\nATTENZIONE — TENTATIVO PRECEDENTE RESPINTO. Correggi questi problemi:\n{feedback}"
+            "\n\nATTENZIONE — TENTATIVO PRECEDENTE RESPINTO. Correggi questi problemi:\n"
+            f"<validation_feedback>\n{feedback}\n</validation_feedback>"
         )
 
     try:

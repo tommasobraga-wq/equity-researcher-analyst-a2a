@@ -169,14 +169,15 @@ async def run_agent(task: A2ATask) -> A2ATaskResult:
     )
 
     prompt = (
-        f"NEWS ITEMS:\n{news_text}\n\n"
-        f"MARKET THEMES:\n{themes_text}\n\n"
-        f"PRE-FETCHED FUNDAMENTALS (use as starting point, verify with tool if needed):\n{fundamentals_hint}\n\n"  # noqa: E501
+        f"NEWS ITEMS:\n<news_items>\n{news_text}\n</news_items>\n\n"
+        f"MARKET THEMES:\n<market_themes>\n{themes_text}\n</market_themes>\n\n"
+        f"PRE-FETCHED FUNDAMENTALS (use as starting point, verify with tool if needed):\n<fundamentals>\n{fundamentals_hint}\n</fundamentals>\n\n"  # noqa: E501
         "Now identify the best candidates and return the JSON array."
     )
     if feedback:
         prompt += (
-            f"\n\nATTENZIONE — TENTATIVO PRECEDENTE RESPINTO. Correggi questi problemi:\n{feedback}"
+            "\n\nATTENZIONE — TENTATIVO PRECEDENTE RESPINTO. Correggi questi problemi:\n"
+            f"<validation_feedback>\n{feedback}\n</validation_feedback>"
         )
 
     try:

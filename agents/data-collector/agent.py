@@ -121,8 +121,8 @@ async def run_agent(task: A2ATask) -> A2ATaskResult:
     for part in task.message.parts:
         if hasattr(part, "data") and part.data.get("validation_feedback"):
             text_input += (
-                f"\n\nATTENZIONE — TENTATIVO PRECEDENTE RESPINTO. Correggi questi problemi:\n"
-                f"{part.data['validation_feedback']}"
+                "\n\nATTENZIONE — TENTATIVO PRECEDENTE RESPINTO. Correggi questi problemi:\n"
+                f"<validation_feedback>\n{part.data['validation_feedback']}\n</validation_feedback>"
             )
     try:
         result = await run_react(

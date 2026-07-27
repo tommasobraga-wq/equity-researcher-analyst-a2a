@@ -173,7 +173,8 @@ async def run_agent(task: A2ATask) -> A2ATaskResult:
     user_prompt = "Now fetch the news and return the JSON."
     if feedback:
         user_prompt += (
-            f"\n\nATTENZIONE — TENTATIVO PRECEDENTE RESPINTO. Correggi questi problemi:\n{feedback}"
+            "\n\nATTENZIONE — TENTATIVO PRECEDENTE RESPINTO. Correggi questi problemi:\n"
+            f"<validation_feedback>\n{feedback}\n</validation_feedback>"
         )
     try:
         data = await run_react(

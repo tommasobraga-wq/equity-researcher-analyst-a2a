@@ -49,13 +49,19 @@ def run_llm_qa(
     model: str = "claude-haiku-4-5-20251001",
     max_tokens: int = 1024,
 ) -> tuple[bool, str]:
-    """Calls Claude to QA-review `subject_json`. Returns (approved, raw_verdict_text)."""
+    """Calls Claude to QA-review `subject_json`. Returns (approved, raw_verdict_text).
+
+    `subject_json` is the (external, LLM-generated) content under review — it is
+    wrapped in <subject_to_review> tags so the reviewer can never confuse data
+    with instructions if the upstream output smuggled in command-like text.
+    """
     system_blocks = [{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}]
+    wrapped_subject = f"<subject_to_review>\n{subject_json}\n</subject_to_review>"
     response = client.messages.create(
         model=model,
         max_tokens=max_tokens,
         system=system_blocks,
-        messages=[{"role": "user", "content": subject_json}],
+        messages=[{"role": "user", "content": wrapped_subject}],
         # Some models (e.g. Sonnet 5) enable extended thinking by default and bill
         # those tokens as output even though we only ever use the verdict text.
         thinking={"type": "disabled"},

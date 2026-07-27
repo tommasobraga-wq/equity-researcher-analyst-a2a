@@ -297,9 +297,12 @@ async def _collect_fundamentals(state: PipelineState, tickers: list[str], stage:
     ticker_list = ", ".join(tickers)
     print(f"      DataCollector ← {ticker_list}")
     feedback = state["validation_feedback"].get(stage, "")
-    message = f"Fetch fundamental data for: {ticker_list}. Return a JSON array."
+    message = f"Fetch fundamental data for these tickers: <tickers>{ticker_list}</tickers>. Return a JSON array."
     if feedback:
-        message += f"\n\nPREVIOUS ATTEMPT FEEDBACK — fix these issues:\n{feedback}"
+        message += (
+            "\n\nPREVIOUS ATTEMPT FEEDBACK — fix these issues:\n"
+            f"<validation_feedback>\n{feedback}\n</validation_feedback>"
+        )
 
     result = await send_task_with_retry(AGENTS["data_collector"], stage, message)
     if result.status == "failed":
