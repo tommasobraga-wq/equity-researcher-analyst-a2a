@@ -17,15 +17,12 @@ priority_sectors:
   - Private Equity
   - Asset Management
 
+# Perimetro azionario: nessuna esclusione di settore "soft". Restano solo
+# crypto/DeFi/Web3, che non sono azioni — guardrail di perimetro, non una
+# preferenza di settore (enforced anche in shared/validators.py::no_crypto).
+# I vincoli ESG hard (thermal coal/tobacco/weapons) vivono in
+# policies/restricted_list.yaml (Gate 1), separati da questa lista.
 excluded_sectors:
-  - energy
-  - utilities
-  - real estate
-  - REITs
-  - consumer staples
-  - industrials
-  - airlines
-  - transportation
   - crypto
   - DeFi
   - Web3

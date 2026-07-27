@@ -44,7 +44,7 @@ _logger = get_logger("gateway")
 _CONFIG_PATH = Path(__file__).parent.parent / "config.yaml"
 _config = yaml.safe_load(_CONFIG_PATH.read_text(encoding="utf-8")) if _CONFIG_PATH.exists() else {}
 _DEFAULT_PRIORITY = (_config or {}).get("priority_sectors", ["Technology", "Banking"])
-_DEFAULT_EXCLUDED = (_config or {}).get("excluded_sectors", ["energy"])
+_DEFAULT_EXCLUDED = (_config or {}).get("excluded_sectors", ["crypto", "DeFi", "Web3"])
 
 app = FastAPI(title="Equity Researcher A2A — Gateway")
 

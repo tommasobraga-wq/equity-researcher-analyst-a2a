@@ -1072,7 +1072,7 @@ if __name__ == "__main__":
             config_data = yaml.safe_load(f) or {}
 
     default_priority_sectors = config_data.get("priority_sectors", ["Technology", "Banking"])
-    default_excluded_sectors = config_data.get("excluded_sectors", ["energy"])
+    default_excluded_sectors = config_data.get("excluded_sectors", ["crypto", "DeFi", "Web3"])
 
     if args.tickers or args.resume:
         # Non-interactive, single-shot: scripted use, or resuming a specific run.

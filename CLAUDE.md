@@ -162,7 +162,7 @@ Every agent follows the same pattern:
 ### Domain constraints (hardcoded in agent prompts)
 
 - Universe: US and EU equities only (UK/LSE excluded)
-- Excluded sectors: energy, utilities, real estate, REITs, consumer staples, industrials, airlines, crypto/DeFi/Web3
+- Perimeter guardrail (not a sector preference): crypto/DeFi/Web3 excluded as outside the equity market (`shared/validators.py::no_crypto` + prompt-level). No "soft" sector exclusions — every US/EU listed-equity sector is allowed. ESG hard-block (thermal coal/tobacco/controversial weapons) lives separately in `policies/restricted_list.yaml` (Gate 1).
 - Priority sectors: Technology, AI, Software, Semiconductors, Banking, Financial Services
 - Final report language: **Italian**
 
