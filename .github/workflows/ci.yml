@@ -8,6 +8,25 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # ComplianceAgent enforces DATABASE_URL + VOYAGE_API_KEY at import time
+    # (shared/db.py::get_vector_pool — fails loudly rather than silently
+    # disabling the RAG gate, see docs/adr/0004-three-gate-compliance.md).
+    # A real Postgres/pgvector service is the faithful way to satisfy that
+    # in CI, matching production instead of faking the agent's own gate.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: equity
+          POSTGRES_PASSWORD: equity
+          POSTGRES_DB: equity_researcher
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U equity -d equity_researcher"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
 
@@ -20,12 +39,21 @@ jobs:
       - name: Lint
         run: uv run ruff check .
 
-      # start.sh requires a .env file; the agents only need a syntactically
-      # present key to start (smoke tests never trigger a real LLM call).
+      # start.sh requires a .env file. ANTHROPIC_API_KEY only needs to be
+      # syntactically present to start (smoke tests never trigger a real LLM
+      # call); DATABASE_URL/VOYAGE_API_KEY must be present and DATABASE_URL
+      # must point at a real reachable Postgres (see services.postgres above)
+      # for ComplianceAgent to start at all.
       - name: Write .env for CI
-        run: echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY || 'sk-ant-ci-placeholder' }}" > .env
+        run: |
+          echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY || 'sk-ant-ci-placeholder' }}" > .env
+          echo "DATABASE_URL=postgresql://equity:equity@localhost:5432/equity_researcher" >> .env
+          echo "VOYAGE_API_KEY=${{ secrets.VOYAGE_API_KEY }}" >> .env
 
-      # test.sh starts all 5 agents (needed for tests/test_smoke.py), runs pytest,
+      - name: Apply migrations
+        run: uv run alembic upgrade head
+
+      # test.sh starts all 7 agents (needed for tests/test_smoke.py), runs pytest,
       # then stops them. Integration tests (real LLM calls) are excluded by default.
       - name: Test
         run: ./test.sh
