@@ -21,8 +21,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from shared.a2a_models import A2ATask, A2ATaskResult
 from shared.a2a_server import handle_task, health_status
-from shared.auth import enforce_secret_policy
 from shared.audit import log_event
+from shared.auth import enforce_secret_policy
 from shared.qa import run_llm_qa
 from shared.react_agent import ToolSpec, run_react
 from shared.tools.yfinance_tool import get_stock_fundamentals_text

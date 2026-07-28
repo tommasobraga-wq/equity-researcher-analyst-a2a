@@ -21,7 +21,6 @@ Create Date: 2026-07-27 16:43:03.891430
 from typing import Sequence, Union
 
 from alembic import op
-
 from shared.db import _SCHEMA, _VECTOR_SCHEMA
 
 # revision identifiers, used by Alembic.

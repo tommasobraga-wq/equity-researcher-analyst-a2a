@@ -87,7 +87,8 @@ async def run_react(
 
     for iteration in range(max_iterations):
         kwargs: dict[str, Any] = dict(
-            model=model, max_tokens=max_tokens, system=system_blocks, messages=messages, tools=tool_defs,
+            model=model, max_tokens=max_tokens,
+            system=system_blocks, messages=messages, tools=tool_defs,
             # Extended thinking is on by default for some models (e.g. Sonnet 5) even
             # without requesting it, and those thinking tokens are billed as output —
             # we never use the thinking content (only the tool_use/text result), so
@@ -105,7 +106,9 @@ async def run_react(
                 "iteration": iteration,
                 "input_tokens": getattr(response.usage, "input_tokens", 0),
                 "output_tokens": getattr(response.usage, "output_tokens", 0),
-                "cache_creation_input_tokens": getattr(response.usage, "cache_creation_input_tokens", 0),
+                "cache_creation_input_tokens": getattr(
+                    response.usage, "cache_creation_input_tokens", 0,
+                ),
                 "cache_read_input_tokens": getattr(response.usage, "cache_read_input_tokens", 0),
                 "estimated_cost_usd": estimate_cost_usd(model, response.usage),
             },
@@ -133,4 +136,6 @@ async def run_react(
                 })
         messages.append({"role": "user", "content": tool_results})
 
-    raise RuntimeError(f"ReAct loop exceeded max_iterations={max_iterations} without a final answer.")
+    raise RuntimeError(
+        f"ReAct loop exceeded max_iterations={max_iterations} without a final answer."
+    )

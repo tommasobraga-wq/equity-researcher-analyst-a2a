@@ -25,4 +25,5 @@ def test_truncates_to_max_len():
 
 
 def test_preserves_normal_text():
-    assert sanitize_external_text("Apple reports record earnings.") == "Apple reports record earnings."
+    text = "Apple reports record earnings."
+    assert sanitize_external_text(text) == text

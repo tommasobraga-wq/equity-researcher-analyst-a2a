@@ -35,7 +35,8 @@ async def test_interpret_prompt_specific_mode():
 async def test_interpret_prompt_discovery_mode():
     client = _mock_client({
         "mode": "discovery", "tickers": [],
-        "priority_sectors": ["Banking"], "excluded_sectors": [], "focus": "settore bancario europeo",
+        "priority_sectors": ["Banking"], "excluded_sectors": [],
+        "focus": "settore bancario europeo",
     })
     intent = await interpret_prompt(client, "opportunità nel settore bancario europeo ora", [])
     assert intent.mode == "discovery"
@@ -60,7 +61,10 @@ async def test_interpret_prompt_passes_history_into_prompt():
         "mode": "specific", "tickers": ["NVDA"],
         "priority_sectors": [], "excluded_sectors": [], "focus": "approfondimento NVDA",
     })
-    history = [{"role": "user", "content": "confrontami NVDA e AMD"}, {"role": "assistant", "content": "..."}]
+    history = [
+        {"role": "user", "content": "confrontami NVDA e AMD"},
+        {"role": "assistant", "content": "..."},
+    ]
     await interpret_prompt(client, "approfondisci il primo", history)
 
     call_kwargs = client.messages.create.call_args.kwargs

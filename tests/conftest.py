@@ -1,7 +1,8 @@
 """Shared fixtures for A2A agent tests."""
 import uuid
-import pytest
+
 import httpx
+import pytest
 
 AGENTS = {
     "data-collector":      {"port": 8001, "name": "DataCollector"},

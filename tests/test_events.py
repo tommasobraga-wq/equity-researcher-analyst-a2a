@@ -1,5 +1,4 @@
 """Unit tests for the in-process event bus (shared/events.py)."""
-import asyncio
 
 import pytest
 

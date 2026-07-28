@@ -8,9 +8,10 @@ e che il campo status sia "completed".
 """
 import json
 import uuid
-import pytest
+
 import httpx
-from conftest import base_url, a2a_payload
+import pytest
+from conftest import a2a_payload, base_url
 
 pytestmark = pytest.mark.integration
 

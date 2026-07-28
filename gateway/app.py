@@ -144,7 +144,11 @@ async def stream(run_id: str):
             # La run potrebbe essere già finita prima che il browser si iscriva.
             info = _runs.get(run_id, {})
             if info.get("status") != "running":
-                yield f"data: {json.dumps({'type': 'run_' + info.get('status', 'failed'), 'error': info.get('error', '')})}\n\n"
+                payload = {
+                    "type": "run_" + info.get("status", "failed"),
+                    "error": info.get("error", ""),
+                }
+                yield f"data: {json.dumps(payload)}\n\n"
                 return
             while True:
                 try:

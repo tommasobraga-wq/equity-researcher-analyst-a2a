@@ -105,7 +105,8 @@ def test_check_candidates_deterministic_flags_uk_ticker():
 
 
 def test_check_candidates_deterministic_flags_directive():
-    errors = check_candidates_deterministic([{"ticker": "AAPL", "thesis": "Comprate ora.", "catalyst": "ok"}])
+    candidates = [{"ticker": "AAPL", "thesis": "Comprate ora.", "catalyst": "ok"}]
+    errors = check_candidates_deterministic(candidates)
     assert any("direttiva" in e for e in errors)
 
 

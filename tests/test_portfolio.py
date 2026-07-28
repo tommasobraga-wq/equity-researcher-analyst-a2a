@@ -29,13 +29,18 @@ def test_clean_allocation_passes():
         {"ticker": "AAPL", "peso_pct": 25, "razionale": "x"},
         {"ticker": "UCG.MI", "peso_pct": 20, "razionale": "y"},
     ]
-    violations = check_portfolio_limits(alloc, FUNDAMENTALS, {"AAPL": [0.01, -0.02, 0.005] * 10, "UCG.MI": [-0.01, 0.02, 0.01] * 10}, LIMITS)
+    returns = {
+        "AAPL": [0.01, -0.02, 0.005] * 10,
+        "UCG.MI": [-0.01, 0.02, 0.01] * 10,
+    }
+    violations = check_portfolio_limits(alloc, FUNDAMENTALS, returns, LIMITS)
     assert rules(violations, "error") == set()
 
 
 def test_position_cap():
     alloc = [{"ticker": "AAPL", "peso_pct": 45, "razionale": "x"}]
-    assert "gate3_position_concentration" in rules(check_portfolio_limits(alloc, FUNDAMENTALS, {}, LIMITS), "error")
+    violations = check_portfolio_limits(alloc, FUNDAMENTALS, {}, LIMITS)
+    assert "gate3_position_concentration" in rules(violations, "error")
 
 
 def test_sector_concentration():
@@ -43,11 +48,15 @@ def test_sector_concentration():
         {"ticker": "AAPL", "peso_pct": 30, "razionale": "x"},
         {"ticker": "MSFT", "peso_pct": 30, "razionale": "y"},
     ]
-    assert "gate3_sector_concentration" in rules(check_portfolio_limits(alloc, FUNDAMENTALS, {}, LIMITS), "error")
+    violations = check_portfolio_limits(alloc, FUNDAMENTALS, {}, LIMITS)
+    assert "gate3_sector_concentration" in rules(violations, "error")
 
 
 def test_max_positions_and_weights_sum():
-    alloc = [{"ticker": t, "peso_pct": 30, "razionale": "x"} for t in ("AAPL", "MSFT", "UCG.MI", "DEEP")]
+    alloc = [
+        {"ticker": t, "peso_pct": 30, "razionale": "x"}
+        for t in ("AAPL", "MSFT", "UCG.MI", "DEEP")
+    ]
     got = rules(check_portfolio_limits(alloc, FUNDAMENTALS, {}, LIMITS), "error")
     assert "gate3_max_positions" in got
     assert "gate3_weights_sum" in got
@@ -55,13 +64,15 @@ def test_max_positions_and_weights_sum():
 
 def test_nonpositive_weight():
     alloc = [{"ticker": "AAPL", "peso_pct": 0, "razionale": "x"}]
-    assert "gate3_weight_range" in rules(check_portfolio_limits(alloc, FUNDAMENTALS, {}, LIMITS), "error")
+    violations = check_portfolio_limits(alloc, FUNDAMENTALS, {}, LIMITS)
+    assert "gate3_weight_range" in rules(violations, "error")
 
 
 def test_drawdown_proxy():
     # DEEP trades 60% below its 52w high — far past the 40% aggregate limit.
     alloc = [{"ticker": "DEEP", "peso_pct": 25, "razionale": "x"}]
-    assert "gate3_drawdown" in rules(check_portfolio_limits(alloc, FUNDAMENTALS, {}, LIMITS), "error")
+    violations = check_portfolio_limits(alloc, FUNDAMENTALS, {}, LIMITS)
+    assert "gate3_drawdown" in rules(violations, "error")
 
 
 def test_correlation_breach_and_missing_series():
@@ -71,7 +82,8 @@ def test_correlation_breach_and_missing_series():
         {"ticker": "MSFT", "peso_pct": 20, "razionale": "y"},
     ]
     # identical series → correlation 1.0 → error
-    violations = check_portfolio_limits(alloc, FUNDAMENTALS, {"AAPL": series, "MSFT": series}, LIMITS)
+    returns = {"AAPL": series, "MSFT": series}
+    violations = check_portfolio_limits(alloc, FUNDAMENTALS, returns, LIMITS)
     assert "gate3_correlation" in rules(violations, "error")
     # missing series → warning only, never an error
     violations = check_portfolio_limits(alloc, FUNDAMENTALS, {}, LIMITS)
@@ -85,7 +97,8 @@ def test_correlation_ignored_below_weight_threshold():
         {"ticker": "AAPL", "peso_pct": 10, "razionale": "x"},
         {"ticker": "MSFT", "peso_pct": 10, "razionale": "y"},
     ]
-    violations = check_portfolio_limits(alloc, FUNDAMENTALS, {"AAPL": series, "MSFT": series}, LIMITS)
+    returns = {"AAPL": series, "MSFT": series}
+    violations = check_portfolio_limits(alloc, FUNDAMENTALS, returns, LIMITS)
     assert "gate3_correlation" not in rules(violations, "error")
 
 
@@ -102,7 +115,10 @@ def test_pearson():
 
 def test_allocation_stage_clean():
     parsed, violations = validate_stage("allocation", [
-        {"ticker": "AAPL", "peso_pct": 25.0, "razionale": "Scoring elevato e catalizzatore vicino."},
+        {
+            "ticker": "AAPL", "peso_pct": 25.0,
+            "razionale": "Scoring elevato e catalizzatore vicino.",
+        },
     ])
     assert parsed is not None
     assert [v for v in violations if v.severity == "error"] == []

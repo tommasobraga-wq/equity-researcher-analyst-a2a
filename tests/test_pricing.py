@@ -4,7 +4,9 @@ from types import SimpleNamespace
 from shared.pricing import estimate_cost_usd
 
 
-def _usage(input_tokens=0, output_tokens=0, cache_creation_input_tokens=0, cache_read_input_tokens=0):
+def _usage(
+    input_tokens=0, output_tokens=0, cache_creation_input_tokens=0, cache_read_input_tokens=0,
+):
     return SimpleNamespace(
         input_tokens=input_tokens,
         output_tokens=output_tokens,

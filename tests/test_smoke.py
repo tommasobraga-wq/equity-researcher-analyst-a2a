@@ -3,10 +3,9 @@
 Verificano che ogni agente sia raggiungibile, risponda con la struttura
 corretta su /health e /.well-known/agent.json, e rifiuti metodi sconosciuti.
 """
-import pytest
 import httpx
-from conftest import AGENTS, base_url, a2a_payload
-
+import pytest
+from conftest import AGENTS, a2a_payload, base_url
 
 # ── /health ───────────────────────────────────────────────────────────────────
 

@@ -145,9 +145,13 @@ def generate_html(
 
     # Save raw pipeline state for debugging
     raw_path = _OUTPUT_DIR / f"raw_{timestamp}.json"
+    raw_data = {
+        "executive_summary": executive_summary,
+        "report": report_dict,
+        "qa_verdict": qa_verdict,
+    }
     raw_path.write_text(
-        json.dumps({"executive_summary": executive_summary, "report": report_dict, "qa_verdict": qa_verdict},
-                   indent=2, ensure_ascii=False),
+        json.dumps(raw_data, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
 

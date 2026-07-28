@@ -79,7 +79,9 @@ class A2ATaskResult(BaseModel):
         )
 
     @classmethod
-    def invalid(cls, task_id: str, error: str, corrections: list[dict[str, Any]] | None = None) -> "A2ATaskResult":
+    def invalid(
+        cls, task_id: str, error: str, corrections: list[dict[str, Any]] | None = None,
+    ) -> "A2ATaskResult":
         """Content/QA rejection — distinct from `fail` (transport/execution crash).
 
         The orchestrator retries `invalid` results by resending the same stage

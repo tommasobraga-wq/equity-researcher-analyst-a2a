@@ -61,7 +61,9 @@ def run_llm_qa(
     wrapped in <subject_to_review> tags so the reviewer can never confuse data
     with instructions if the upstream output smuggled in command-like text.
     """
-    system_blocks = [{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}]
+    system_blocks = [
+        {"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}},
+    ]
     wrapped_subject = f"<subject_to_review>\n{subject_json}\n</subject_to_review>"
     response = client.messages.create(
         model=model,

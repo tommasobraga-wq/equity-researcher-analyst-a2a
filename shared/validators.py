@@ -7,7 +7,13 @@ from dataclasses import dataclass
 from pydantic import BaseModel, ValidationError
 
 from shared.models import Report
-from shared.schemas import AllocationItem, CandidateItem, FundamentalRecord, NewsThemesOutput, RiskItem
+from shared.schemas import (
+    AllocationItem,
+    CandidateItem,
+    FundamentalRecord,
+    NewsThemesOutput,
+    RiskItem,
+)
 
 
 @dataclass
@@ -18,7 +24,10 @@ class Violation:
     message: str
 
     def as_dict(self) -> dict:
-        return {"rule": self.rule, "severity": self.severity, "ticker": self.ticker, "message": self.message}
+        return {
+            "rule": self.rule, "severity": self.severity,
+            "ticker": self.ticker, "message": self.message,
+        }
 
 
 _CRYPTO_KEYWORDS = {
@@ -49,8 +58,10 @@ _NEWS_ID_RE = re.compile(r"^N\d+$")
 # framing/delimiting defense in each agent's system prompt and the
 # sanitization in shared/sanitize.py.
 _INJECTION_RE = re.compile(
-    r"(ignor[ae]\s+(tutte\s+le\s+|le\s+)?istruzioni|disregard\s+(all\s+|previous\s+|above\s+)?instructions|"
-    r"ignore\s+(all\s+|previous\s+|above\s+)?instructions|new\s+instructions\s*:|nuove\s+istruzioni\s*:|"
+    r"(ignor[ae]\s+(tutte\s+le\s+|le\s+)?istruzioni|"
+    r"disregard\s+(all\s+|previous\s+|above\s+)?instructions|"
+    r"ignore\s+(all\s+|previous\s+|above\s+)?instructions|"
+    r"new\s+instructions\s*:|nuove\s+istruzioni\s*:|"
     r"system\s*:|assistant\s*:|\bhuman\s*:|###\s*(system|instruction)|you\s+are\s+now|"
     r"sei\s+ora\s+un|d'ora\s+in\s+poi\s+(sei|agisci))",
     re.IGNORECASE,
@@ -126,7 +137,9 @@ def check_candidates_deterministic(candidates: list[dict]) -> list[str]:
         text = " ".join(str(c.get(f, "")) for f in ("thesis", "catalyst"))
         match = _check_directive(text)
         if match:
-            errors.append(f"{ticker}: direttiva esplicita di acquisto/vendita trovata — '{match.group()}'.")
+            errors.append(
+                f"{ticker}: direttiva esplicita di acquisto/vendita trovata — '{match.group()}'."
+            )
     return errors
 
 
@@ -224,46 +237,77 @@ def validate(report: Report | None) -> list[Violation]:
 
         match = _check_directive(text)
         if match:
-            violations.append(Violation(rule="no_buy_sell_directives", severity="error", ticker=c.ticker,
-                message=f"{c.ticker}: direttiva esplicita trovata — '{match.group()}'."))
+            violations.append(Violation(
+                rule="no_buy_sell_directives", severity="error", ticker=c.ticker,
+                message=f"{c.ticker}: direttiva esplicita trovata — '{match.group()}'.",
+            ))
 
         if len(c.evidenze_citate) < 2:
-            violations.append(Violation(rule="citation_count", severity="warning", ticker=c.ticker,
-                message=f"{c.ticker}: {len(c.evidenze_citate)} news citate (minimo 2)."))
+            violations.append(Violation(
+                rule="citation_count", severity="warning", ticker=c.ticker,
+                message=f"{c.ticker}: {len(c.evidenze_citate)} news citate (minimo 2).",
+            ))
         for nid in c.evidenze_citate:
             if not _NEWS_ID_RE.match(nid):
-                violations.append(Violation(rule="citation_format", severity="warning", ticker=c.ticker,
-                    message=f"{c.ticker}: ID news non valido '{nid}' (formato atteso: N1, N2, ...)."))
+                violations.append(Violation(
+                    rule="citation_format", severity="warning", ticker=c.ticker,
+                    message=(
+                        f"{c.ticker}: ID news non valido '{nid}' "
+                        "(formato atteso: N1, N2, ...)."
+                    ),
+                ))
 
         matches, expected = _check_scoring_arithmetic(c.scoring)
         if not matches:
-            violations.append(Violation(rule="score_arithmetic", severity="error", ticker=c.ticker,
-                message=f"{c.ticker}: scoring.totale={c.scoring.totale} ma somma dimensioni={expected}."))
+            violations.append(Violation(
+                rule="score_arithmetic", severity="error", ticker=c.ticker,
+                message=(
+                    f"{c.ticker}: scoring.totale={c.scoring.totale} "
+                    f"ma somma dimensioni={expected}."
+                ),
+            ))
 
         for dim in _SCORING_DIMS:
             val = getattr(c.scoring, dim)
             if not (1 <= val <= 10):
-                violations.append(Violation(rule="score_range", severity="error", ticker=c.ticker,
-                    message=f"{c.ticker}: scoring.{dim}={val} fuori range 1–10."))
+                violations.append(Violation(
+                    rule="score_range", severity="error", ticker=c.ticker,
+                    message=f"{c.ticker}: scoring.{dim}={val} fuori range 1–10.",
+                ))
 
         if c.rating_qualita.lower() not in _VALID_RATINGS:
-            violations.append(Violation(rule="quality_rating", severity="warning", ticker=c.ticker,
-                message=f"{c.ticker}: rating_qualita='{c.rating_qualita}' non è uno di alta|media|bassa."))
+            violations.append(Violation(
+                rule="quality_rating", severity="warning", ticker=c.ticker,
+                message=(
+                    f"{c.ticker}: rating_qualita='{c.rating_qualita}' "
+                    "non è uno di alta|media|bassa."
+                ),
+            ))
 
         if c.consenso_analisti.giudizio_sintetico.lower() not in _VALID_GIUDIZI:
-            violations.append(Violation(rule="consensus_giudizio", severity="warning", ticker=c.ticker,
-                message=f"{c.ticker}: giudizio_sintetico='{c.consenso_analisti.giudizio_sintetico}' non è un valore standard."))
+            violations.append(Violation(
+                rule="consensus_giudizio", severity="warning", ticker=c.ticker,
+                message=(
+                    f"{c.ticker}: giudizio_sintetico="
+                    f"'{c.consenso_analisti.giudizio_sintetico}' non è un valore standard."
+                ),
+            ))
 
     for t in report.temi:
         text = _full_text_tema(t)
         crypto_hits = _check_crypto(text)
         if crypto_hits:
-            violations.append(Violation(rule="no_crypto", severity="error", ticker=None,
-                message=f"Tema '{t.tema_id}': keyword crypto rilevata ({', '.join(sorted(crypto_hits))})."))
+            crypto_str = ", ".join(sorted(crypto_hits))
+            violations.append(Violation(
+                rule="no_crypto", severity="error", ticker=None,
+                message=f"Tema '{t.tema_id}': keyword crypto rilevata ({crypto_str}).",
+            ))
         match = _check_directive(text)
         if match:
-            violations.append(Violation(rule="no_buy_sell_directives", severity="error", ticker=None,
-                message=f"Tema '{t.tema_id}': direttiva esplicita trovata — '{match.group()}'."))
+            violations.append(Violation(
+                rule="no_buy_sell_directives", severity="error", ticker=None,
+                message=f"Tema '{t.tema_id}': direttiva esplicita trovata — '{match.group()}'.",
+            ))
 
     return violations
 
@@ -323,8 +367,13 @@ def validate_stage(stage: str, payload) -> tuple[object | None, list[Violation]]
 
         injection_hit = _check_injection(" ".join(_collect_strings(item)))
         if injection_hit:
-            violations.append(Violation(rule="injection_marker", severity="error", ticker=ticker,
-                message=f"{stage}: marker di prompt injection rilevato — '{injection_hit.group()}'."))
+            violations.append(Violation(
+                rule="injection_marker", severity="error", ticker=ticker,
+                message=(
+                    f"{stage}: marker di prompt injection rilevato — "
+                    f"'{injection_hit.group()}'."
+                ),
+            ))
 
         text_fields = [
             getattr(item, f, "") for f in ("thesis", "catalyst", "falsification")
@@ -334,20 +383,30 @@ def validate_stage(stage: str, payload) -> tuple[object | None, list[Violation]]
 
         crypto_hits = _check_crypto(f"{ticker or ''} {text}")
         if crypto_hits:
-            violations.append(Violation(rule="no_crypto", severity="error", ticker=ticker,
-                message=f"{stage}: keyword crypto rilevata ({', '.join(sorted(crypto_hits))})."))
+            crypto_str = ", ".join(sorted(crypto_hits))
+            violations.append(Violation(
+                rule="no_crypto", severity="error", ticker=ticker,
+                message=f"{stage}: keyword crypto rilevata ({crypto_str}).",
+            ))
 
         match = _check_directive(text)
         if match:
-            violations.append(Violation(rule="no_buy_sell_directives", severity="error", ticker=ticker,
-                message=f"{stage}: direttiva esplicita trovata — '{match.group()}'."))
+            violations.append(Violation(
+                rule="no_buy_sell_directives", severity="error", ticker=ticker,
+                message=f"{stage}: direttiva esplicita trovata — '{match.group()}'.",
+            ))
 
         scoring = getattr(item, "scoring", None)
         if scoring is not None and hasattr(scoring, "totale"):
             matches, expected = _check_scoring_arithmetic(scoring)
             if not matches:
-                violations.append(Violation(rule="score_arithmetic", severity="error", ticker=ticker,
-                    message=f"{stage}: scoring.totale={scoring.totale} ma somma dimensioni={expected}."))
+                violations.append(Violation(
+                    rule="score_arithmetic", severity="error", ticker=ticker,
+                    message=(
+                        f"{stage}: scoring.totale={scoring.totale} "
+                        f"ma somma dimensioni={expected}."
+                    ),
+                ))
 
     if stage == "allocation":
         # Basic arithmetic sanity here (schema-level); the aggregate limit
@@ -356,15 +415,21 @@ def validate_stage(stage: str, payload) -> tuple[object | None, list[Violation]]
         total_weight = 0.0
         for item in parsed:
             if not (0 < item.peso_pct <= 100):
-                violations.append(Violation(rule="allocation_weight_range", severity="error", ticker=item.ticker,
-                    message=f"{item.ticker}: peso_pct={item.peso_pct} fuori range (0, 100]."))
+                violations.append(Violation(
+                    rule="allocation_weight_range", severity="error", ticker=item.ticker,
+                    message=f"{item.ticker}: peso_pct={item.peso_pct} fuori range (0, 100].",
+                ))
             else:
                 total_weight += item.peso_pct
             if not item.razionale.strip():
-                violations.append(Violation(rule="allocation_rationale", severity="error", ticker=item.ticker,
-                    message=f"{item.ticker}: razionale mancante per il peso assegnato."))
+                violations.append(Violation(
+                    rule="allocation_rationale", severity="error", ticker=item.ticker,
+                    message=f"{item.ticker}: razionale mancante per il peso assegnato.",
+                ))
         if total_weight > 100.01:
-            violations.append(Violation(rule="allocation_weights_sum", severity="error", ticker=None,
-                message=f"Somma dei pesi {total_weight:.1f}% > 100%."))
+            violations.append(Violation(
+                rule="allocation_weights_sum", severity="error", ticker=None,
+                message=f"Somma dei pesi {total_weight:.1f}% > 100%.",
+            ))
 
     return parsed, violations

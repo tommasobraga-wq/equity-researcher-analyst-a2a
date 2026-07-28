@@ -23,8 +23,13 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.execute("CREATE INDEX IF NOT EXISTS idx_audit_agent_created ON audit_log(agent, created_at)")
-    op.execute("CREATE INDEX IF NOT EXISTS idx_audit_event_type_created ON audit_log(event_type, created_at)")
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS idx_audit_agent_created ON audit_log(agent, created_at)"
+    )
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS idx_audit_event_type_created "
+        "ON audit_log(event_type, created_at)"
+    )
 
 
 def downgrade() -> None:

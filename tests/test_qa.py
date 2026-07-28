@@ -1,4 +1,5 @@
 """Unit tests for shared/qa.py — verdict parsing and the run_llm_qa wrapper (mocked client)."""
+import json
 from unittest.mock import MagicMock
 
 from shared.qa import parse_qa_verdict, run_llm_qa
@@ -26,13 +27,16 @@ def test_parse_qa_verdict_no_match_is_not_approved():
 
 
 def test_parse_qa_verdict_extracts_corrections():
+    correction = {
+        "ticker": "AAPL", "field": "scoring.totale", "value": 31, "motivo": "somma errata",
+    }
     text = (
         "QA: DA_CORREGGERE\nErrore nello scoring.\n"
-        '=== CORREZIONI ===\n[{"ticker": "AAPL", "field": "scoring.totale", "value": 31, "motivo": "somma errata"}]'
+        f"=== CORREZIONI ===\n{json.dumps([correction])}"
     )
     approved, corrections = parse_qa_verdict(text)
     assert approved is False
-    assert corrections == [{"ticker": "AAPL", "field": "scoring.totale", "value": 31, "motivo": "somma errata"}]
+    assert corrections == [correction]
 
 
 def test_parse_qa_verdict_malformed_corrections_json_is_ignored():
@@ -55,14 +59,18 @@ def _mock_client(reply_text: str) -> MagicMock:
 
 def test_run_llm_qa_approved():
     client = _mock_client("QA: APPROVATO\nOk.")
-    approved, raw = run_llm_qa(client, "system prompt", "subject json", correlation_id="test", agent="test_agent")
+    approved, raw = run_llm_qa(
+        client, "system prompt", "subject json", correlation_id="test", agent="test_agent",
+    )
     assert approved is True
     assert "APPROVATO" in raw
 
 
 def test_run_llm_qa_rejected():
     client = _mock_client("QA: DA_CORREGGERE\nProblema trovato.")
-    approved, raw = run_llm_qa(client, "system prompt", "subject json", correlation_id="test", agent="test_agent")
+    approved, raw = run_llm_qa(
+        client, "system prompt", "subject json", correlation_id="test", agent="test_agent",
+    )
     assert approved is False
 
 
@@ -77,6 +85,8 @@ def test_run_llm_qa_skips_non_text_blocks():
     response.content = [thinking_block, text_block]
     client.messages.create.return_value = response
 
-    approved, raw = run_llm_qa(client, "system", "subject", correlation_id="test", agent="test_agent")
+    approved, raw = run_llm_qa(
+        client, "system", "subject", correlation_id="test", agent="test_agent",
+    )
     assert approved is True
     assert raw == "QA: APPROVATO"

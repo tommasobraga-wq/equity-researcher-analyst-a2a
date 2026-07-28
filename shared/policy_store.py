@@ -20,7 +20,8 @@ from shared.log import get_logger
 _logger = get_logger("policy_store")
 
 _EMBED_MODEL = os.getenv("VOYAGE_EMBED_MODEL", "voyage-4")
-_EMBED_DIMENSION = 1024  # default output dim for voyage-4 — must match shared/db.py::_VECTOR_SCHEMA's vector(1024)
+# Default output dim for voyage-4 — must match shared/db.py::_VECTOR_SCHEMA's vector(1024).
+_EMBED_DIMENSION = 1024
 
 # Chunking: split on blank lines (paragraph-level) — internal policy docs are
 # short, structured markdown, not long-form prose, so a fixed-size sliding
@@ -161,12 +162,14 @@ async def ingest_documents(paths: list[Path]) -> int:
             await conn.execute("DELETE FROM policy_chunks WHERE source = $1", source)
             for record, vector in zip(records, vectors):
                 await conn.execute(
-                    "INSERT INTO policy_chunks (content, embedding, source, metadata) VALUES ($1, $2, $3, $4)",
+                    "INSERT INTO policy_chunks (content, embedding, source, metadata) "
+                    "VALUES ($1, $2, $3, $4)",
                     record["content"], vector, source, json.dumps(record["metadata"]),
                 )
             total += len(records)
             _logger.info(
-                f"Ingested {len(records)} chunk(s) from {source}", extra={"event_type": "policy_ingest"},
+                f"Ingested {len(records)} chunk(s) from {source}",
+                extra={"event_type": "policy_ingest"},
             )
     return total
 

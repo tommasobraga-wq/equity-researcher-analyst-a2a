@@ -68,3 +68,7 @@ select = ["E", "F", "I"]  # E=stile, F=errori logici, I=import ordinati
 "agents/report-writer/agent.py" = ["E501"]
 "agents/risk-assessor/agent.py" = ["E501"]
 "agents/compliance-agent/agent.py" = ["E501"]
+"agents/news-sentiment/agent.py" = ["E501"]
+"agents/fundamental-analyst/agent.py" = ["E501"]
+"agents/data-collector/agent.py" = ["E501"]
+"agents/portfolio-manager/agent.py" = ["E501"]

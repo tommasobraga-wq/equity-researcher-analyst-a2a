@@ -32,7 +32,9 @@ def _load_text(path: Path) -> str:
         doc.close()
 
 
-def _chunk_by_article(text: str, marker_pattern: str, doc_type: str, source: str) -> list[dict[str, Any]]:
+def _chunk_by_article(
+    text: str, marker_pattern: str, doc_type: str, source: str,
+) -> list[dict[str, Any]]:
     """Splits on an "Article N" / "Art. N" marker, one chunk per article.
 
     Regulatory PDFs typically list every article twice — once in the table
@@ -186,7 +188,8 @@ def _chunk_suitability(path: Path) -> list[dict[str, Any]]:
     history, not compliance rules a Compliance Agent should cite."""
     text = _load_text(path)
     start = text.find("3.4 Annex IV - Guidelines")
-    body_start = text.find("3.4 Annex IV - Guidelines", start + 1)  # skip ToC entry, use body heading
+    # skip ToC entry, use body heading
+    body_start = text.find("3.4 Annex IV - Guidelines", start + 1)
     if body_start < 0:
         body_start = start
     end = text.find("3.5 Annex V", body_start)

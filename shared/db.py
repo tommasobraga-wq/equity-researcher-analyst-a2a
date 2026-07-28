@@ -55,7 +55,8 @@ CREATE TABLE IF NOT EXISTS conversation_turns (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS idx_conversation_turns_session ON conversation_turns(session_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_conversation_turns_session
+    ON conversation_turns(session_id, created_at);
 """
 
 # Separate from _SCHEMA: requires the `vector` extension, which may not be
@@ -150,7 +151,9 @@ async def get_vector_pool() -> asyncpg.Pool:
     return _vector_pool
 
 
-async def save_run_state(run_id: str, tickers: list[str], status: str, last_stage: str, state: dict[str, Any]) -> None:
+async def save_run_state(
+    run_id: str, tickers: list[str], status: str, last_stage: str, state: dict[str, Any],
+) -> None:
     """Upserts a snapshot of the pipeline's LangGraph state, so a crash
     mid-run can be resumed from the last completed stage instead of
     restarting the whole pipeline. Best-effort: never raises — if
@@ -175,7 +178,10 @@ async def save_run_state(run_id: str, tickers: list[str], status: str, last_stag
                 json.dumps(state, ensure_ascii=False, default=str),
             )
     except Exception as e:
-        _logger.warning(f"Pipeline state save failed: {e}", extra={"correlation_id": run_id, "event_type": "pipeline_run"})
+        _logger.warning(
+            f"Pipeline state save failed: {e}",
+            extra={"correlation_id": run_id, "event_type": "pipeline_run"},
+        )
 
 
 async def load_run_state(run_id: str) -> dict[str, Any] | None:
@@ -192,7 +198,10 @@ async def load_run_state(run_id: str) -> dict[str, Any] | None:
             )
         return json.loads(row["state"]) if row else None
     except Exception as e:
-        _logger.warning(f"Pipeline state load failed: {e}", extra={"correlation_id": run_id, "event_type": "pipeline_run"})
+        _logger.warning(
+            f"Pipeline state load failed: {e}",
+            extra={"correlation_id": run_id, "event_type": "pipeline_run"},
+        )
         return None
 
 
@@ -238,7 +247,9 @@ async def get_or_create_session(session_id: str | None = None) -> str | None:
             )
             return str(row["session_id"])
     except Exception as e:
-        _logger.warning(f"Session resolution failed: {e}", extra={"event_type": "conversation_session"})
+        _logger.warning(
+            f"Session resolution failed: {e}", extra={"event_type": "conversation_session"},
+        )
         return None
 
 
@@ -250,7 +261,8 @@ async def append_turn(session_id: str, role: str, content: str, run_id: str | No
             return
         async with pool.acquire() as conn:
             await conn.execute(
-                "INSERT INTO conversation_turns (session_id, role, content, run_id) VALUES ($1, $2, $3, $4)",
+                "INSERT INTO conversation_turns (session_id, role, content, run_id) "
+                "VALUES ($1, $2, $3, $4)",
                 session_id, role, content, run_id,
             )
     except Exception as e:

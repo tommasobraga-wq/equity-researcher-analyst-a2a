@@ -37,7 +37,9 @@ def _secret() -> str | None:
     return os.getenv("A2A_SHARED_SECRET") or None
 
 
-def _signed_response(payload: dict[str, Any], secret: str | None, status_code: int = 200) -> Response:
+def _signed_response(
+    payload: dict[str, Any], secret: str | None, status_code: int = 200,
+) -> Response:
     """Serializes `payload` exactly once and signs those exact bytes — the
     orchestrator verifies the response signature unconditionally (success or
     error), so every reply on this route (including 401/404/422) must be
@@ -48,7 +50,9 @@ def _signed_response(payload: dict[str, Any], secret: str | None, status_code: i
         timestamp = str(time.time())
         headers["X-A2A-Timestamp"] = timestamp
         headers["X-A2A-Signature"] = sign(secret, body, timestamp)
-    return Response(content=body, media_type="application/json", headers=headers, status_code=status_code)
+    return Response(
+        content=body, media_type="application/json", headers=headers, status_code=status_code,
+    )
 
 
 async def handle_task(request: Request, run_agent: RunAgentFn, agent_name: str) -> Response:
@@ -69,7 +73,10 @@ async def handle_task(request: Request, run_agent: RunAgentFn, agent_name: str) 
             )
             _logger.warning(
                 "Rejected request: invalid or missing A2A signature",
-                extra={"correlation_id": "unknown", "agent": agent_name, "event_type": "a2a_request"},
+                extra={
+                    "correlation_id": "unknown", "agent": agent_name,
+                    "event_type": "a2a_request",
+                },
             )
             resp = JsonRpcResponse.fail(-32001, "Unauthorized: invalid or missing A2A signature")
             return _signed_response(resp.model_dump(), secret, status_code=401)

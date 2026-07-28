@@ -19,7 +19,9 @@ _logger = get_logger("audit")
 # knows both values before calling run_agent) so shared/react_agent.py and
 # shared/qa.py can pick up correlation_id/agent without every one of their
 # ~13 call sites across 7 agents having to thread them through manually.
-_correlation_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("correlation_id", default=None)
+_correlation_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "correlation_id", default=None,
+)
 _agent_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("agent", default=None)
 
 

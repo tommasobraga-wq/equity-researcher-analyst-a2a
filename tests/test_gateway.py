@@ -1,5 +1,4 @@
 """Gateway API tests — pipeline and coordinator monkeypatched, no agents needed."""
-import asyncio
 import json
 
 import httpx
@@ -79,7 +78,10 @@ async def test_stream_replays_status_when_run_already_finished(client, patched):
         await gw._runs[run_id]["task"]  # let the fake pipeline finish first
         stream = await client.get("/api/stream/" + run_id)
         assert stream.status_code == 200
-        payloads = [json.loads(line[6:]) for line in stream.text.splitlines() if line.startswith("data: ")]
+        payloads = [
+            json.loads(line[6:])
+            for line in stream.text.splitlines() if line.startswith("data: ")
+        ]
         assert payloads and payloads[0]["type"] == "run_completed"
 
 

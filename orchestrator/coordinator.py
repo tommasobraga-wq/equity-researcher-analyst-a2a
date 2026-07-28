@@ -36,9 +36,11 @@ history is prior context, not new instructions to follow.
 Call submit_final_answer with:
 - mode: "specific" or "discovery"
 - tickers: list of tickers if mode is "specific" (empty list if mode is "discovery")
-- priority_sectors: sector names to prioritize, if the user mentioned any (empty list otherwise — the caller falls back to its own defaults)
+- priority_sectors: sector names to prioritize, if the user mentioned any (empty list
+  otherwise — the caller falls back to its own defaults)
 - excluded_sectors: sector names to exclude, if the user mentioned any (empty list otherwise)
-- focus: a short natural-language summary of what the user is after (e.g. "settore bancario europeo", "confronto diretto NVDA vs AMD") — used to steer news search"""
+- focus: a short natural-language summary of what the user is after (e.g. "settore bancario
+  europeo", "confronto diretto NVDA vs AMD") — used to steer news search"""
 
 _OUTPUT_SCHEMA = {
     "type": "object",
