@@ -197,8 +197,11 @@ The JSON schema embedded in `_REPORT_SCHEMA` defines the canonical output struct
 
 See `.env.example` for the full list. Requires `ANTHROPIC_API_KEY` in `.env` at project root. `A2A_SHARED_SECRET`/`A2A_AUTH_REQUIRED` and `DATABASE_URL` are optional for the other 5 agents/orchestrator — without them, A2A signing, audit persistence, resumable runs, and conversation memory degrade to no-ops (see `shared/auth.py`, `shared/db.py` above). `VOYAGE_API_KEY` **and** `DATABASE_URL` (with the `vector` extension available) are **required** for the Compliance Agent specifically — it fails to start without them (see RAG section above). No other API keys needed for the default configuration (yfinance and RSS feeds require no keys).
 
+## Architecture Decision Records
+
+`docs/adr/` records the reasoning behind the major architectural choices (A2A decomposition, the LangGraph dynamic orchestrator vs. a fixed-sequence crew, the three-gate compliance model, containerization, observability, and the overengineering reversals — circuit breaker, per-IP rate limiting, duplicated schema DDL). Consult it before revisiting a decision that looks questionable in isolation; several entries document something that was tried and deliberately reverted, with the reasoning kept so it isn't re-tried for the same reason.
+
 ## Roadmap
 
-- **v2 orchestrator**: migrate to LangGraph when the agent graph justifies it
 - **Model phase 2**: Gemini Flash for NewsSentiment (add `GOOGLE_API_KEY` to `.env`, change model_id only)
 - **Model phase 3**: Ollama local models via OpenAI-compatible endpoint (`http://localhost:11434/v1`)
