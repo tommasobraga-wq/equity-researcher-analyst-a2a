@@ -7,6 +7,7 @@ import pytest
 
 import gateway.app as gw
 from shared import events
+from shared.rate_limit import RateLimiter
 
 
 class _FakeIntent:
@@ -98,3 +99,21 @@ async def test_report_404_before_completion(client):
         resp = await client.get("/api/report/pending")
         assert resp.status_code == 404
     gw._runs.pop("pending")
+
+
+async def test_chat_rate_limited_returns_429(client, patched, monkeypatch):
+    monkeypatch.setattr(gw, "_rate_limiter", RateLimiter(max_per_window=1))
+    async with client:
+        first = await client.post("/api/chat", json={"text": "confrontami AAPL"})
+        assert first.status_code == 200
+        second = await client.post("/api/chat", json={"text": "confrontami AAPL"})
+        assert second.status_code == 429
+        assert "Retry-After" in second.headers
+
+
+async def test_chat_rejects_when_too_many_concurrent_runs(client, monkeypatch):
+    monkeypatch.setattr(gw, "_MAX_CONCURRENT_RUNS", 0)
+    async with client:
+        resp = await client.post("/api/chat", json={"text": "confrontami AAPL"})
+        assert resp.status_code == 429
+        assert "Retry-After" in resp.headers

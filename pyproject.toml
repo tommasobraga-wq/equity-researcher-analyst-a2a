@@ -18,6 +18,11 @@ dependencies = [
     "yfinance>=1.2.0",
     # Audit trail storage
     "asyncpg>=0.29.0",
+    # Versioned schema migrations (sync engine + driver, used only by the
+    # Alembic CLI — the app itself keeps using asyncpg for all queries)
+    "alembic>=1.13.0",
+    "sqlalchemy>=2.0.0",
+    "psycopg2-binary>=2.9.0",
     # RAG (Compliance Agent — policy retrieval)
     "pgvector>=0.3.0",
     "voyageai>=0.3.0",

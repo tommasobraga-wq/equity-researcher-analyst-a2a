@@ -199,11 +199,6 @@ function handleEvent(ev) {
         '<span class="badge warn">re-allocazione richiesta</span>' +
         listOf(ev.violations, v => "<code>" + esc(v.rule) + "</code> " + esc(v.message)), "gate");
       break;
-    case "circuit_open":
-      addEvent(ev.ts,
-        '<span class="stage">Circuit breaker</span><span class="badge err">aperto</span>' +
-        '<div class="detail">' + esc(ev.agent) + " — " + esc(ev.failures) + " errori consecutivi</div>", "fail");
-      break;
     case "run_complete":
     case "run_completed": {
       addEvent(ev.ts, '<span class="stage">Run completata</span><span class="badge ok">' +

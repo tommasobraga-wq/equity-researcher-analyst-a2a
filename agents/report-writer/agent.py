@@ -21,7 +21,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from shared.a2a_models import A2ATask, A2ATaskResult
 from shared.a2a_server import handle_task, health_status
+from shared.audit import current_correlation_id, log_event_fire_and_forget
 from shared.auth import enforce_secret_policy
+from shared.pricing import estimate_cost_usd
 from shared.qa import run_llm_qa
 
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
@@ -149,6 +151,18 @@ def _call_claude(system: str, user: str, model: str, max_tokens: int) -> str:
         # Some models (e.g. Sonnet 5) enable extended thinking by default and bill
         # those tokens as output even though we only ever use the final text.
         thinking={"type": "disabled"},
+    )
+    log_event_fire_and_forget(
+        current_correlation_id(), "llm_usage", "report_writer",
+        payload={
+            "model": model,
+            "input_tokens": getattr(response.usage, "input_tokens", 0),
+            "output_tokens": getattr(response.usage, "output_tokens", 0),
+            "cache_creation_input_tokens": getattr(response.usage, "cache_creation_input_tokens", 0),
+            "cache_read_input_tokens": getattr(response.usage, "cache_read_input_tokens", 0),
+            "estimated_cost_usd": estimate_cost_usd(model, response.usage),
+        },
+        status="ok",
     )
     return "".join(block.text for block in response.content if block.type == "text")
 

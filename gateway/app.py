@@ -14,6 +14,7 @@ Avvio: uv run uvicorn gateway.app:app --port 8000
 """
 import asyncio
 import json
+import os
 import sys
 import uuid
 from pathlib import Path
@@ -35,6 +36,7 @@ from shared.auth import enforce_secret_policy
 from shared.db import append_turn, get_or_create_session, load_recent_turns
 from shared.events import STREAM_END, end_stream, subscribe, unsubscribe
 from shared.log import get_logger
+from shared.rate_limit import RateLimiter
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 enforce_secret_policy()
@@ -51,6 +53,11 @@ app = FastAPI(title="Equity Researcher A2A — Gateway")
 # run_id → info sulla run (task, report_path quando disponibile)
 _runs: dict[str, dict] = {}
 
+# POST /api/chat only — the endpoint that triggers paid LLM calls. Other
+# endpoints (stream/report/health) are cheap reads, left unlimited.
+_rate_limiter = RateLimiter(max_per_window=int(os.getenv("RATE_LIMIT_PER_MINUTE", "10")))
+_MAX_CONCURRENT_RUNS = int(os.getenv("RATE_LIMIT_MAX_CONCURRENT_RUNS", "3"))
+
 
 class ChatRequest(BaseModel):
     text: str
@@ -62,6 +69,19 @@ async def chat(req: ChatRequest):
     text = req.text.strip()
     if not text:
         raise HTTPException(status_code=422, detail="Richiesta vuota.")
+
+    running = sum(1 for r in _runs.values() if r["status"] == "running")
+    if running >= _MAX_CONCURRENT_RUNS:
+        raise HTTPException(
+            status_code=429, detail="Troppe pipeline in corso, riprova tra poco.",
+            headers={"Retry-After": "30"},
+        )
+
+    if not _rate_limiter.check():
+        raise HTTPException(
+            status_code=429, detail="Troppe richieste, riprova tra poco.",
+            headers={"Retry-After": "60"},
+        )
 
     session_id = await get_or_create_session(req.session_id)
     history = await load_recent_turns(session_id) if session_id else []

@@ -8,6 +8,9 @@ import re
 
 import anthropic
 
+from shared.audit import current_agent, current_correlation_id, log_event_fire_and_forget
+from shared.pricing import estimate_cost_usd
+
 _VERDICT_RE = re.compile(r"QA:\s*\[?(APPROVATO|DA_CORREGGERE)\]?", re.IGNORECASE)
 
 
@@ -48,6 +51,9 @@ def run_llm_qa(
     subject_json: str,
     model: str = "claude-haiku-4-5-20251001",
     max_tokens: int = 1024,
+    *,
+    correlation_id: str | None = None,
+    agent: str | None = None,
 ) -> tuple[bool, str]:
     """Calls Claude to QA-review `subject_json`. Returns (approved, raw_verdict_text).
 
@@ -70,4 +76,22 @@ def run_llm_qa(
     # ThinkingBlock before the text response — content[0] is not always text.
     raw = "".join(block.text for block in response.content if block.type == "text")
     approved, _ = parse_qa_verdict(raw)
+
+    usage = getattr(response, "usage", None)
+    if usage is not None:
+        # Defaults to the correlation_id/agent scoped by handle_task (see
+        # shared/react_agent.py::run_react for the same pattern).
+        log_event_fire_and_forget(
+            correlation_id or current_correlation_id(), "llm_usage", agent or current_agent(),
+            payload={
+                "model": model,
+                "input_tokens": getattr(usage, "input_tokens", 0),
+                "output_tokens": getattr(usage, "output_tokens", 0),
+                "cache_creation_input_tokens": getattr(usage, "cache_creation_input_tokens", 0),
+                "cache_read_input_tokens": getattr(usage, "cache_read_input_tokens", 0),
+                "estimated_cost_usd": estimate_cost_usd(model, usage),
+            },
+            status="ok",
+        )
+
     return approved, raw

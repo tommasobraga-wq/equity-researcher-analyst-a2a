@@ -10,6 +10,9 @@ from typing import Any, Awaitable, Callable
 
 import anthropic
 
+from shared.audit import current_agent, current_correlation_id, log_event
+from shared.pricing import estimate_cost_usd
+
 
 @dataclass
 class ToolSpec:
@@ -31,6 +34,9 @@ async def run_react(
     max_tokens: int = 4096,
     max_iterations: int = 10,
     output_schema: dict[str, Any] | None = None,
+    *,
+    correlation_id: str | None = None,
+    agent: str | None = None,
 ) -> str | dict[str, Any]:
     """Runs the tool-use loop.
 
@@ -69,10 +75,17 @@ async def run_react(
     if tool_defs:
         tool_defs[-1] = {**tool_defs[-1], "cache_control": {"type": "ephemeral"}}
 
+    # Defaults to the correlation_id/agent scoped by shared/a2a_server.py::handle_task
+    # for the duration of this A2A task, so callers running inside a normal
+    # run_agent() don't need to pass these explicitly. Only orchestrator/coordinator.py
+    # (which never goes through handle_task) passes them explicitly.
+    cid = correlation_id or current_correlation_id()
+    ag = agent or current_agent()
+
     handlers = {t.name: t.handler for t in tools}
     messages: list[dict[str, Any]] = [{"role": "user", "content": user_prompt}]
 
-    for _ in range(max_iterations):
+    for iteration in range(max_iterations):
         kwargs: dict[str, Any] = dict(
             model=model, max_tokens=max_tokens, system=system_blocks, messages=messages, tools=tool_defs,
             # Extended thinking is on by default for some models (e.g. Sonnet 5) even
@@ -84,6 +97,20 @@ async def run_react(
         if output_schema is not None:
             kwargs["tool_choice"] = {"type": "any"}
         response = await client.messages.create(**kwargs)
+
+        await log_event(
+            cid, "llm_usage", ag,
+            payload={
+                "model": model,
+                "iteration": iteration,
+                "input_tokens": getattr(response.usage, "input_tokens", 0),
+                "output_tokens": getattr(response.usage, "output_tokens", 0),
+                "cache_creation_input_tokens": getattr(response.usage, "cache_creation_input_tokens", 0),
+                "cache_read_input_tokens": getattr(response.usage, "cache_read_input_tokens", 0),
+                "estimated_cost_usd": estimate_cost_usd(model, response.usage),
+            },
+            status="ok",
+        )
 
         if output_schema is not None:
             for block in response.content:

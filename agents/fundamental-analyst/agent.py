@@ -26,6 +26,7 @@ from shared.audit import log_event
 from shared.qa import run_llm_qa
 from shared.react_agent import ToolSpec, run_react
 from shared.tools.yfinance_tool import get_stock_fundamentals_text
+from shared.validators import check_candidates_deterministic
 
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
 enforce_secret_policy()
@@ -38,8 +39,8 @@ _QA_SYSTEM = """Sei un revisore QA di candidati equity per ricerca azionaria.
 Controlla il JSON array fornito:
 1. Ogni candidato ha una tesi (thesis) specifica per l'azienda, non solo commento macro.
 2. Nessun candidato è fuori dal perimetro azionario (crypto/DeFi/Web3). Qualsiasi settore azionario US/EU è ammesso.
-3. Nessun ticker LSE (suffisso .L).
-4. Nessuna direttiva esplicita di acquisto/vendita nel testo.
+
+(Il ticker LSE e le direttive esplicite di acquisto/vendita sono già verificati deterministicamente a monte — non serve ricontrollarli.)
 
 Rispondi SOLO con la prima riga esattamente "QA: APPROVATO" oppure "QA: DA_CORREGGERE" (senza parentesi), seguita da max 2 frasi di motivazione."""
 
@@ -192,7 +193,13 @@ async def run_agent(task: A2ATask) -> A2ATaskResult:
         )
         candidates = result["candidates"]
 
-        approved, qa_text = run_llm_qa(_qa_client, _QA_SYSTEM, json.dumps(candidates, ensure_ascii=False), model=_QA_MODEL)
+        det_errors = check_candidates_deterministic(candidates)
+        if det_errors:
+            return A2ATaskResult.invalid(task.id, " ".join(det_errors))
+
+        approved, qa_text = run_llm_qa(
+            _qa_client, _QA_SYSTEM, json.dumps(candidates, ensure_ascii=False), model=_QA_MODEL,
+        )
         if not approved:
             return A2ATaskResult.invalid(task.id, qa_text)
 

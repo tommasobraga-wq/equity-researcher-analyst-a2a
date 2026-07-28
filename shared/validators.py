@@ -107,6 +107,74 @@ def _check_scoring_arithmetic(scoring) -> tuple[bool, int]:
     return total == expected, expected
 
 
+# ------------------------------------------------------------------ #
+# Pre-QA deterministic checks — run on the agent's raw dict output    #
+# before the LLM-QA pass, so format/arithmetic issues are caught at   #
+# zero LLM cost and never rely on a model to re-derive a fixed rule.  #
+# ------------------------------------------------------------------ #
+
+def check_candidates_deterministic(candidates: list[dict]) -> list[str]:
+    """Perimeter/format checks for FundamentalAnalyst output: UK ticker
+    suffix and explicit buy/sell directives — both fixed rules, not
+    judgment calls, so no LLM is needed to verify them."""
+    errors: list[str] = []
+    for c in candidates:
+        ticker = c.get("ticker", "")
+        if ticker.upper().endswith(".L"):
+            errors.append(f"{ticker}: ticker LSE (suffisso .L) — fuori dall'universo US/EU.")
+
+        text = " ".join(str(c.get(f, "")) for f in ("thesis", "catalyst"))
+        match = _check_directive(text)
+        if match:
+            errors.append(f"{ticker}: direttiva esplicita di acquisto/vendita trovata — '{match.group()}'.")
+    return errors
+
+
+def check_risk_scoring_deterministic(risk_assessment: list[dict]) -> list[str]:
+    """scoring.totale must equal the exact sum of the 5 dimensions — pure
+    arithmetic, unless the candidate is marked dati_insufficienti (all
+    scores intentionally 0)."""
+    errors: list[str] = []
+    for r in risk_assessment:
+        if r.get("quality") == "dati_insufficienti":
+            continue
+        ticker = r.get("ticker", "")
+        scoring = r.get("scoring", {}) or {}
+        expected = sum(scoring.get(d, 0) for d in _SCORING_DIMS)
+        total = scoring.get("totale")
+        if total != expected:
+            errors.append(f"{ticker}: scoring.totale={total} ma somma dimensioni={expected}.")
+    return errors
+
+
+def check_compliance_format_deterministic(
+    compliance_results: list[dict], expected_tickers: list[str],
+) -> list[str]:
+    """Presence/non-empty checks on compliance verdicts: every expected
+    ticker has exactly one verdict, and a compliant=false verdict always
+    carries a non-empty motivo + at least one policy_ref."""
+    errors: list[str] = []
+    seen: dict[str, int] = {}
+    for r in compliance_results:
+        ticker = r.get("ticker", "")
+        seen[ticker] = seen.get(ticker, 0) + 1
+        if not r.get("compliant", True):
+            if not str(r.get("motivo", "")).strip():
+                errors.append(f"{ticker}: compliant=false ma 'motivo' vuoto.")
+            if not r.get("policy_refs"):
+                errors.append(f"{ticker}: compliant=false ma 'policy_refs' vuoto.")
+
+    dupes = [t for t, n in seen.items() if n > 1]
+    if dupes:
+        errors.append(f"Verdetti duplicati per: {', '.join(sorted(dupes))}.")
+
+    missing = set(expected_tickers) - set(seen)
+    if missing:
+        errors.append(f"Verdetti mancanti per: {', '.join(sorted(missing))}.")
+
+    return errors
+
+
 def _full_text(c) -> str:
     parts = [
         c.tesi, c.catalizzatore, c.trigger_falsificazione,

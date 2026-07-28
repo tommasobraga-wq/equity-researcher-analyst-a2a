@@ -7,6 +7,7 @@ tools (pure reasoning/extraction, nothing to fetch) and a forced output
 schema, exactly the same mechanism every other agent uses for structured
 output.
 """
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -85,6 +86,10 @@ async def interpret_prompt(
         model=_MODEL,
         max_iterations=3,
         output_schema=_OUTPUT_SCHEMA,
+        # No A2A task here (this runs per free-text turn, before any pipeline
+        # run_id exists) — a fresh id per call is enough to trace this call
+        # in audit_log, it doesn't need to align with the eventual run_id.
+        correlation_id=str(uuid.uuid4()), agent="coordinator",
     )
     return CoordinatorIntent(
         mode=data["mode"],

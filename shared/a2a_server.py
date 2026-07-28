@@ -13,7 +13,7 @@ from typing import Any, Awaitable, Callable
 from fastapi import Request, Response
 
 from shared.a2a_models import A2ATask, A2ATaskResult, JsonRpcRequest, JsonRpcResponse
-from shared.audit import log_event
+from shared.audit import audit_context, log_event
 from shared.auth import sign, verify
 from shared.db import check_connection
 from shared.log import get_logger
@@ -100,7 +100,11 @@ async def handle_task(request: Request, run_agent: RunAgentFn, agent_name: str) 
     )
 
     t0 = time.perf_counter()
-    result = await run_agent(task)
+    # Scopes correlation_id/agent for every LLM call this task makes
+    # (shared/react_agent.py::run_react, shared/qa.py::run_llm_qa) without
+    # each of the ~13 call sites across 7 agents having to pass them.
+    with audit_context(task.id, agent_name):
+        result = await run_agent(task)
     duration_ms = int((time.perf_counter() - t0) * 1000)
 
     await log_event(

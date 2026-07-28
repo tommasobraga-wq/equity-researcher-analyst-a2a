@@ -136,7 +136,9 @@ async def run_agent(task: A2ATask) -> A2ATaskResult:
         )
         data = result["fundamentals"]
 
-        approved, qa_text = run_llm_qa(_qa_client, _QA_SYSTEM, json.dumps(data, ensure_ascii=False), model=_QA_MODEL)
+        approved, qa_text = run_llm_qa(
+            _qa_client, _QA_SYSTEM, json.dumps(data, ensure_ascii=False), model=_QA_MODEL,
+        )
         if not approved:
             return A2ATaskResult.invalid(task.id, qa_text)
 

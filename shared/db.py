@@ -132,12 +132,21 @@ async def get_vector_pool() -> asyncpg.Pool:
             "— compliance checks cannot silently run without policy retrieval."
         )
 
+    # The extension/schema must exist before creating a pool whose `init`
+    # callback registers the pgvector codec on every connection it opens —
+    # register_vector() requires the `vector` type to already be present,
+    # so on a brand-new Postgres (extension not yet created) this ordering
+    # matters: bootstrap on a bare connection first, then create the pool.
+    bootstrap_conn = await asyncpg.connect(database_url)
+    try:
+        await bootstrap_conn.execute(_VECTOR_SCHEMA)
+    finally:
+        await bootstrap_conn.close()
+
     async def _init(conn):
         await pgvector.asyncpg.register_vector(conn)
 
     _vector_pool = await asyncpg.create_pool(database_url, min_size=1, max_size=5, init=_init)
-    async with _vector_pool.acquire() as conn:
-        await conn.execute(_VECTOR_SCHEMA)
     return _vector_pool
 
 

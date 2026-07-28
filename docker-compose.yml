@@ -1,0 +1,261 @@
+x-agent-defaults: &agent-defaults
+  build: .
+  image: equity-a2a:local
+  env_file: .env
+  restart: unless-stopped
+
+services:
+  # DATABASE_URL on every agent below (not just compliance-agent/gateway) so
+  # audit_log — including the llm_usage rows the observability dashboard
+  # reads — is actually populated for all 7 agents, not just the 2 that
+  # already needed Postgres for other reasons. Audit logging itself stays
+  # best-effort (shared/audit.py never raises), so this only enables data
+  # collection, it doesn't make Postgres a hard requirement for these agents.
+  data-collector:
+    <<: *agent-defaults
+    command: uv run python agents/data-collector/agent.py
+    ports: ["8001:8001"]
+    environment:
+      DATABASE_URL: postgresql://equity:equity@postgres:5432/equity_researcher
+    depends_on:
+      postgres: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8001/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  news-sentiment:
+    <<: *agent-defaults
+    command: uv run python agents/news-sentiment/agent.py
+    ports: ["8002:8002"]
+    environment:
+      DATABASE_URL: postgresql://equity:equity@postgres:5432/equity_researcher
+    depends_on:
+      postgres: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8002/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  fundamental-analyst:
+    <<: *agent-defaults
+    command: uv run python agents/fundamental-analyst/agent.py
+    ports: ["8003:8003"]
+    environment:
+      DATABASE_URL: postgresql://equity:equity@postgres:5432/equity_researcher
+    depends_on:
+      postgres: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8003/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  risk-assessor:
+    <<: *agent-defaults
+    command: uv run python agents/risk-assessor/agent.py
+    ports: ["8004:8004"]
+    environment:
+      DATABASE_URL: postgresql://equity:equity@postgres:5432/equity_researcher
+    depends_on:
+      postgres: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8004/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  report-writer:
+    <<: *agent-defaults
+    command: uv run python agents/report-writer/agent.py
+    ports: ["8005:8005"]
+    environment:
+      DATABASE_URL: postgresql://equity:equity@postgres:5432/equity_researcher
+    depends_on:
+      postgres: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8005/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  portfolio-manager:
+    <<: *agent-defaults
+    command: uv run python agents/portfolio-manager/agent.py
+    ports: ["8007:8007"]
+    environment:
+      DATABASE_URL: postgresql://equity:equity@postgres:5432/equity_researcher
+    depends_on:
+      postgres: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8007/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Postgres + pgvector — required by compliance-agent (Gate 2), which is a
+  # mandatory, non-skippable pipeline stage (unlike audit/resume/conversation
+  # memory, which genuinely degrade to no-ops without DATABASE_URL). Kept in
+  # the default profile, not a separate one: splitting it off looked clean
+  # but broke every real pipeline run, since ComplianceAgent has no fallback.
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: equity
+      POSTGRES_PASSWORD: equity
+      POSTGRES_DB: equity_researcher
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U equity -d equity_researcher"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # One-shot, blocking init step: applies Alembic migrations before any
+  # service that writes to Postgres starts. Fast/idempotent (unlike
+  # ingest-policies), so unlike that job this runs automatically on every
+  # `up` rather than behind a manual profile — a forgettable manual step is
+  # exactly what broke compliance-agent earlier in this same file.
+  migrate:
+    <<: *agent-defaults
+    command: uv run alembic upgrade head
+    restart: "no"
+    environment:
+      DATABASE_URL: postgresql://equity:equity@postgres:5432/equity_researcher
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  compliance-agent:
+    <<: *agent-defaults
+    command: uv run python agents/compliance-agent/agent.py
+    ports: ["8006:8006"]
+    environment:
+      DATABASE_URL: postgresql://equity:equity@postgres:5432/equity_researcher
+    depends_on:
+      postgres: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8006/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  gateway:
+    <<: *agent-defaults
+    command: uv run uvicorn gateway.app:app --host 0.0.0.0 --port 8000
+    ports: ["8000:8000"]
+    environment:
+      DATA_COLLECTOR_URL: http://data-collector:8001
+      NEWS_SENTIMENT_URL: http://news-sentiment:8002
+      FUNDAMENTAL_ANALYST_URL: http://fundamental-analyst:8003
+      RISK_ASSESSOR_URL: http://risk-assessor:8004
+      REPORT_WRITER_URL: http://report-writer:8005
+      COMPLIANCE_AGENT_URL: http://compliance-agent:8006
+      PORTFOLIO_MANAGER_URL: http://portfolio-manager:8007
+      DATABASE_URL: postgresql://equity:equity@postgres:5432/equity_researcher
+    depends_on:
+      data-collector: { condition: service_healthy }
+      news-sentiment: { condition: service_healthy }
+      fundamental-analyst: { condition: service_healthy }
+      risk-assessor: { condition: service_healthy }
+      compliance-agent: { condition: service_healthy }
+      portfolio-manager: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+
+  # One-shot job — populates policy_chunks from policies/docs/*.{md,pdf} via
+  # Voyage AI embeddings. Not part of the default `up` (rate-limited, can
+  # take minutes); run explicitly once before using compliance-agent for real:
+  #   docker compose run --rm ingest-policies
+  ingest-policies:
+    <<: *agent-defaults
+    profiles: ["tools"]
+    command: uv run python scripts/ingest_policies.py
+    restart: "no"
+    environment:
+      DATABASE_URL: postgresql://equity:equity@postgres:5432/equity_researcher
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  # Manual, on-demand logical backup/restore — pg_dump/pg_restore already
+  # ship in the postgres image, no app code needed. Bind-mounted to a host
+  # directory (not the pgdata named volume) so dumps survive independently
+  # of the container/volume and can be copied off-host for real DR.
+  #   docker compose --profile tools run --rm backup
+  #   BACKUP_FILE=equity_researcher_20260727_143000.dump \
+  #     docker compose --profile tools run --rm restore
+  backup:
+    image: pgvector/pgvector:pg16
+    profiles: ["tools"]
+    environment:
+      PGPASSWORD: equity
+    volumes:
+      - ./backups:/backups
+    entrypoint: ["sh", "-c"]
+    # A YAML list with a single string element — not a plain scalar — so
+    # Compose passes it through as one argv element to `sh -c`. A plain
+    # string here gets shell-word-split by Compose before being appended
+    # after `entrypoint`, so `sh -c` only sees its first word as the
+    # command and the rest become $0/$1/... positional params and are
+    # silently dropped, breaking the command entirely.
+    command:
+      - >-
+        pg_dump -h postgres -U equity -d equity_researcher -Fc
+        -f /backups/equity_researcher_$$(date +%Y%m%d_%H%M%S).dump &&
+        find /backups -name '*.dump' -mtime +30 -delete
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  restore:
+    image: pgvector/pgvector:pg16
+    profiles: ["tools"]
+    environment:
+      PGPASSWORD: equity
+      # Compose does not auto-forward host shell env vars into the
+      # container — this interpolates BACKUP_FILE from the host (single
+      # $, evaluated by Compose) into the container's own environment, so
+      # the container-level $${BACKUP_FILE} below (escaped, evaluated by
+      # the container's shell) can see it.
+      BACKUP_FILE: ${BACKUP_FILE:-}
+    volumes:
+      - ./backups:/backups
+    entrypoint: ["sh", "-c"]
+    command:
+      - >-
+        pg_restore -h postgres -U equity -d equity_researcher
+        --clean --if-exists /backups/$${BACKUP_FILE:?set BACKUP_FILE=<dump filename>}
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  # Observability dashboard over audit_log (latency, error rate, LLM token
+  # cost/volume) — grafana-oss is fully open source (AGPLv3), not the
+  # grafana/grafana image, matching the license carefulness already applied
+  # to Docker Desktop earlier. Optional: purely observational, omitting it
+  # breaks nothing, unlike compliance-agent — so a separate profile is
+  # correct here (docker compose --profile observability up -d grafana).
+  # Datasource + dashboard are auto-provisioned (observability/grafana/) —
+  # no manual setup needed after first login.
+  grafana:
+    image: grafana/grafana-oss:11.4.0
+    profiles: ["observability"]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+    ports: ["3000:3000"]
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      postgres: { condition: service_healthy }
+
+volumes:
+  pgdata:
+  grafana-data:

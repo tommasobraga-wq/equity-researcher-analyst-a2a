@@ -1,56 +1,8 @@
-"""Unit tests for orchestrator/main.py — circuit breaker + resume entry routing.
+"""Unit tests for orchestrator/main.py — resume entry routing + router logic.
 
-No network/DB involved: both are pure in-memory logic.
+No network/DB involved: pure in-memory logic.
 """
-import time
-
 import orchestrator.main as om
-
-
-def setup_function():
-    om._circuit_state.clear()
-
-
-def test_circuit_starts_closed():
-    om._circuit_check("agent")  # must not raise
-
-
-def test_circuit_opens_after_threshold_failures():
-    for _ in range(om._CIRCUIT_FAILURE_THRESHOLD):
-        om._circuit_record_failure("agent")
-    assert om._circuit_state["agent"]["opened_at"] is not None
-
-
-def test_circuit_check_raises_when_open():
-    for _ in range(om._CIRCUIT_FAILURE_THRESHOLD):
-        om._circuit_record_failure("agent")
-    try:
-        om._circuit_check("agent")
-        assert False, "expected RuntimeError"
-    except RuntimeError:
-        pass
-
-
-def test_circuit_half_opens_after_cooldown():
-    for _ in range(om._CIRCUIT_FAILURE_THRESHOLD):
-        om._circuit_record_failure("agent")
-    om._circuit_state["agent"]["opened_at"] = time.time() - om._CIRCUIT_COOLDOWN_SECONDS - 1
-    om._circuit_check("agent")  # must not raise
-    assert om._circuit_state["agent"]["opened_at"] is None
-
-
-def test_circuit_success_resets_failures():
-    om._circuit_record_failure("agent")
-    om._circuit_record_failure("agent")
-    om._circuit_record_success("agent")
-    assert om._circuit_state["agent"] == {"failures": 0, "opened_at": None}
-
-
-def test_circuit_is_per_agent():
-    for _ in range(om._CIRCUIT_FAILURE_THRESHOLD):
-        om._circuit_record_failure("agent-a")
-    om._circuit_check("agent-b")  # different agent, must not raise
-
 
 _EMPTY_STAGES = {
     "tickers": [], "candidate_tickers": [], "fundamentals": [], "news": [], "themes": [],

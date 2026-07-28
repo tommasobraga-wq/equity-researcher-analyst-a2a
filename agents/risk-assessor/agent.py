@@ -29,6 +29,7 @@ from shared.audit import log_event
 from shared.qa import run_llm_qa
 from shared.react_agent import ToolSpec, run_react
 from shared.tools.yfinance_tool import get_stock_fundamentals
+from shared.validators import check_risk_scoring_deterministic
 
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
 enforce_secret_policy()
@@ -44,9 +45,10 @@ solo perché è successiva a {today}: le date forward-looking DEVONO essere
 successive a {today}, è corretto che lo siano.
 
 Controlla il JSON array fornito (racchiuso nei tag <subject_to_review>):
-1. scoring.totale è la somma esatta delle 5 dimensioni (ognuna 1-10, max 50), a meno che quality sia "dati_insufficienti".
-2. Ogni candidato con quality diverso da "dati_insufficienti" ha scenari (base/bull/bear) e rischi compilati.
-3. Le date forward-looking menzionate sono successive a {today} (coerenti con oggi).
+1. Ogni candidato con quality diverso da "dati_insufficienti" ha scenari (base/bull/bear) e rischi compilati.
+2. Le date forward-looking menzionate sono successive a {today} (coerenti con oggi).
+
+(L'aritmetica di scoring.totale è già verificata deterministicamente a monte — non serve ricontrollarla.)
 
 Rispondi SOLO con la prima riga esattamente "QA: APPROVATO" oppure "QA: DA_CORREGGERE" (senza parentesi), seguita da max 2 frasi di motivazione."""
 
@@ -228,7 +230,14 @@ async def run_agent(task: A2ATask) -> A2ATaskResult:
         )
         risk_data = result["risk_assessment"]
 
-        approved, qa_text = run_llm_qa(_qa_client, _QA_SYSTEM.format(today=today), json.dumps(risk_data, ensure_ascii=False), model=_QA_MODEL)
+        det_errors = check_risk_scoring_deterministic(risk_data)
+        if det_errors:
+            return A2ATaskResult.invalid(task.id, " ".join(det_errors))
+
+        approved, qa_text = run_llm_qa(
+            _qa_client, _QA_SYSTEM.format(today=today), json.dumps(risk_data, ensure_ascii=False),
+            model=_QA_MODEL,
+        )
         if not approved:
             return A2ATaskResult.invalid(task.id, qa_text)
 

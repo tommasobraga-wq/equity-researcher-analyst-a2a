@@ -28,6 +28,7 @@ from shared.auth import enforce_secret_policy
 from shared.policy_store import search_policy
 from shared.qa import run_llm_qa
 from shared.react_agent import ToolSpec, run_react
+from shared.validators import check_compliance_format_deterministic
 
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
 enforce_secret_policy()
@@ -62,11 +63,12 @@ limiti di concentrazione (coperti da gate deterministici separati). Non pretende
 questi ultimi.
 
 Controlla il JSON array fornito (racchiuso nei tag <subject_to_review>):
-1. Ogni candidato del batch originale ha un verdetto (nessuno mancante, nessuno duplicato).
-2. Ogni verdetto con compliant=false ha "motivo" non vuoto e almeno un elemento in "policy_refs".
-3. I "policy_refs" citano nomi di documento del corpus plausibili (es. CELEX_32019R2088 / SFDR,
+1. I "policy_refs" citano nomi di documento del corpus plausibili (es. CELEX_32019R2088 / SFDR,
    ESMA product governance o suitability, reg_consob_2018_20307), non inventati.
-4. compliant=true SENZA policy_refs è legittimo (policy silenti sul punto) — non respingerlo per questo.
+2. compliant=true SENZA policy_refs è legittimo (policy silenti sul punto) — non respingerlo per questo.
+
+(Verdetti mancanti/duplicati e motivo/policy_refs vuoti su compliant=false sono già verificati
+deterministicamente a monte — non serve ricontrollarli.)
 
 Rispondi SOLO con la prima riga esattamente "QA: APPROVATO" oppure "QA: DA_CORREGGERE" (senza parentesi), seguita da max 2 frasi di motivazione."""
 
@@ -214,6 +216,11 @@ async def run_agent(task: A2ATask) -> A2ATaskResult:
             output_schema=_OUTPUT_SCHEMA,
         )
         compliance_results = result["compliance_results"]
+
+        expected_tickers = [c.get("ticker", "") for c in candidates]
+        det_errors = check_compliance_format_deterministic(compliance_results, expected_tickers)
+        if det_errors:
+            return A2ATaskResult.invalid(task.id, " ".join(det_errors))
 
         approved, qa_text = run_llm_qa(
             _qa_client, _QA_SYSTEM, json.dumps(compliance_results, ensure_ascii=False), model=_QA_MODEL,

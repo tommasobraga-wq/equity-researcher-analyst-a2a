@@ -14,7 +14,6 @@ grafo con due topologie scelte dinamicamente in base al prompt utente:
       → fundamental_analyst (8003) → risk_assessor (8004) → report_writer (8005)
 """
 import asyncio
-import contextvars
 import json
 import os
 import sys
@@ -57,22 +56,20 @@ enforce_secret_policy()
 _logger = get_logger("orchestrator")
 _coordinator_client = anthropic.AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
+# Overridable via env var (e.g. DATA_COLLECTOR_URL=http://data-collector:8001 in
+# docker-compose, where agents are reached by service name, not localhost).
+# Defaults are unchanged for local uv run/start.sh usage.
 AGENTS = {
-    "data_collector":      "http://localhost:8001",
-    "news_sentiment":      "http://localhost:8002",
-    "fundamental_analyst": "http://localhost:8003",
-    "risk_assessor":       "http://localhost:8004",
-    "report_writer":       "http://localhost:8005",
-    "compliance_agent":    "http://localhost:8006",
-    "portfolio_manager":   "http://localhost:8007",
+    "data_collector":      os.getenv("DATA_COLLECTOR_URL", "http://localhost:8001"),
+    "news_sentiment":      os.getenv("NEWS_SENTIMENT_URL", "http://localhost:8002"),
+    "fundamental_analyst": os.getenv("FUNDAMENTAL_ANALYST_URL", "http://localhost:8003"),
+    "risk_assessor":       os.getenv("RISK_ASSESSOR_URL", "http://localhost:8004"),
+    "report_writer":       os.getenv("REPORT_WRITER_URL", "http://localhost:8005"),
+    "compliance_agent":    os.getenv("COMPLIANCE_AGENT_URL", "http://localhost:8006"),
+    "portfolio_manager":   os.getenv("PORTFOLIO_MANAGER_URL", "http://localhost:8007"),
 }
 
 MAX_VALIDATION_RETRIES = 2
-
-# The run_id of the pipeline currently executing in this task tree — lets
-# code without access to PipelineState (e.g. the circuit breaker) emit events
-# for the right run even when the gateway runs several pipelines concurrently.
-_current_run_id: contextvars.ContextVar[str | None] = contextvars.ContextVar("run_id", default=None)
 
 
 def _feedback_text(violations) -> str:
@@ -183,48 +180,6 @@ async def send_task(
 
 _RATE_LIMIT_KEYWORDS = ("rate_limit", "rate limit", "too many requests", "concurrent connections", "429")
 
-# ------------------------------------------------------------------ #
-# Circuit breaker — per agent, in-memory (one orchestrator process =    #
-# one pipeline run, so process-lifetime state is enough)                #
-# ------------------------------------------------------------------ #
-
-_CIRCUIT_FAILURE_THRESHOLD = 3
-_CIRCUIT_COOLDOWN_SECONDS = 60.0
-
-_circuit_state: dict[str, dict[str, Any]] = {}
-
-
-def _circuit_check(agent_name: str) -> None:
-    """Raises immediately (no HTTP call attempted) if the circuit for
-    `agent_name` is open. After `_CIRCUIT_COOLDOWN_SECONDS`, the circuit
-    goes half-open — one call is let through to test recovery."""
-    state = _circuit_state.get(agent_name)
-    if not state or state["opened_at"] is None:
-        return
-    elapsed = time.time() - state["opened_at"]
-    if elapsed < _CIRCUIT_COOLDOWN_SECONDS:
-        raise RuntimeError(
-            f"Circuit open for {agent_name}: {state['failures']} consecutive failures, "
-            f"retrying in {_CIRCUIT_COOLDOWN_SECONDS - elapsed:.0f}s."
-        )
-    state["opened_at"] = None  # half-open: let the next call through
-
-
-def _circuit_record_success(agent_name: str) -> None:
-    _circuit_state[agent_name] = {"failures": 0, "opened_at": None}
-
-
-def _circuit_record_failure(agent_name: str) -> None:
-    state = _circuit_state.setdefault(agent_name, {"failures": 0, "opened_at": None})
-    state["failures"] += 1
-    if state["failures"] >= _CIRCUIT_FAILURE_THRESHOLD and state["opened_at"] is None:
-        state["opened_at"] = time.time()
-        emit(_current_run_id.get(), "circuit_open", agent=agent_name, failures=state["failures"])
-        _logger.warning(
-            f"Circuit opened for {agent_name} after {state['failures']} consecutive failures",
-            extra={"agent": agent_name, "event_type": "circuit_open"},
-        )
-
 
 async def send_task_with_retry(
     agent_url: str,
@@ -235,29 +190,21 @@ async def send_task_with_retry(
     max_retries: int = 5,
     retry_delay: float = 90.0,
 ) -> A2ATaskResult:
-    _circuit_check(agent_name)
-    try:
-        for attempt in range(max_retries):
-            result = await send_task(agent_url, agent_name, message, data, timeout)
-            if result.status != "failed":
-                _circuit_record_success(agent_name)
-                return result
-            error_text = result.message.text().lower()
-            if not any(kw in error_text for kw in _RATE_LIMIT_KEYWORDS):
-                _circuit_record_failure(agent_name)
-                return result
-            if attempt < max_retries - 1:
-                print(f"      ⚠ Rate limit — waiting {retry_delay:.0f}s (retry {attempt + 1}/{max_retries - 1})...")
-                _logger.warning(
-                    f"Rate limit — retrying in {retry_delay:.0f}s (attempt {attempt + 1}/{max_retries - 1})",
-                    extra={"agent": agent_name, "event_type": "rate_limit_retry"},
-                )
-                await asyncio.sleep(retry_delay)
-        _circuit_record_failure(agent_name)
-        return result
-    except Exception:
-        _circuit_record_failure(agent_name)
-        raise
+    for attempt in range(max_retries):
+        result = await send_task(agent_url, agent_name, message, data, timeout)
+        if result.status != "failed":
+            return result
+        error_text = result.message.text().lower()
+        if not any(kw in error_text for kw in _RATE_LIMIT_KEYWORDS):
+            return result
+        if attempt < max_retries - 1:
+            print(f"      ⚠ Rate limit — waiting {retry_delay:.0f}s (retry {attempt + 1}/{max_retries - 1})...")
+            _logger.warning(
+                f"Rate limit — retrying in {retry_delay:.0f}s (attempt {attempt + 1}/{max_retries - 1})",
+                extra={"agent": agent_name, "event_type": "rate_limit_retry"},
+            )
+            await asyncio.sleep(retry_delay)
+    return result
 
 
 def _extract_data(result: A2ATaskResult, key: str) -> Any:
@@ -951,7 +898,6 @@ async def run_pipeline(
         }
     run_id = initial_state["run_id"]
     print(f"      → run_id: {run_id} (mode={initial_state['mode']})")
-    _current_run_id.set(run_id)
     if initial_state.get("gate1_excluded"):
         # The "specific"-mode restricted-list check ran before run_id existed.
         emit(run_id, "gate1_block", check="restricted_list", blocked=initial_state["gate1_excluded"])
@@ -1008,6 +954,7 @@ async def run_pipeline(
         "qa_verdict": final_state["qa_verdict"],
         "report": final_state["report"],
         "report_path": str(report_path),
+        "analyzed_tickers": analyzed_tickers,
     }
 
 
@@ -1020,6 +967,36 @@ def _print_result(result: dict) -> None:
     print(result.get("executive_summary", ""))
     print("\n=== QA VERDICT ===")
     print(result.get("qa_verdict", ""))
+
+
+def _summarize_result_for_turn(result: dict) -> str:
+    """Compact, deterministic (no LLM) structured summary of a pipeline run,
+    persisted as the assistant turn instead of the free-text executive
+    summary — guarantees the ticker list and outcome the coordinator needs
+    to resolve later references ("approfondisci NVDA", "rispetto a ieri")
+    are always present and bounded in size, rather than depending on the
+    report-writer prompt's own length discipline."""
+    report = result.get("report") or {}
+    candidati = [
+        {
+            "ticker": c.get("ticker", ""),
+            "rating_qualita": c.get("rating_qualita", ""),
+            "giudizio": c.get("consenso_analisti", {}).get("giudizio_sintetico", ""),
+            "scoring_totale": c.get("scoring", {}).get("totale", 0),
+        }
+        for c in report.get("candidati", [])
+    ]
+    esclusi = [
+        {"ticker": c.get("ticker", ""), "motivo": c.get("motivo_esclusione", "")}
+        for c in report.get("candidati_esclusi", [])
+    ]
+    summary = {
+        "run_id": result.get("run_id", ""),
+        "tickers_analizzati": result.get("analyzed_tickers", []),
+        "candidati": candidati,
+        "candidati_esclusi": esclusi,
+    }
+    return json.dumps(summary, ensure_ascii=False)
 
 
 async def _interactive_loop(
@@ -1082,7 +1059,7 @@ async def _interactive_loop(
         _print_result(result)
         if session_id:
             await append_turn(
-                session_id, "assistant", result.get("executive_summary", ""),
+                session_id, "assistant", _summarize_result_for_turn(result),
                 run_id=result.get("run_id"),
             )
         print()

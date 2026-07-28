@@ -1,6 +1,12 @@
 """Unit tests for shared/validators.py — deterministic report/stage checks."""
 from shared.models import Candidato, Report, Scoring
-from shared.validators import validate, validate_stage
+from shared.validators import (
+    check_candidates_deterministic,
+    check_compliance_format_deterministic,
+    check_risk_scoring_deterministic,
+    validate,
+    validate_stage,
+)
 
 
 def _valid_candidato(**overrides) -> Candidato:
@@ -86,3 +92,68 @@ def test_validate_stage_candidates_detects_crypto():
     payload = [{"ticker": "AAPL", "thesis": "Questa azienda investe in Bitcoin e DeFi."}]
     parsed, violations = validate_stage("candidates", payload)
     assert any(v.rule == "no_crypto" for v in violations)
+
+
+# ------------------------------------------------------------------ #
+# Pre-QA deterministic checks (fundamental-analyst / risk-assessor /  #
+# compliance-agent), run before the LLM-QA pass.                      #
+# ------------------------------------------------------------------ #
+
+def test_check_candidates_deterministic_flags_uk_ticker():
+    errors = check_candidates_deterministic([{"ticker": "VOD.L", "thesis": "ok", "catalyst": "ok"}])
+    assert any("LSE" in e for e in errors)
+
+
+def test_check_candidates_deterministic_flags_directive():
+    errors = check_candidates_deterministic([{"ticker": "AAPL", "thesis": "Comprate ora.", "catalyst": "ok"}])
+    assert any("direttiva" in e for e in errors)
+
+
+def test_check_candidates_deterministic_clean():
+    errors = check_candidates_deterministic([{"ticker": "AAPL", "thesis": "ok", "catalyst": "ok"}])
+    assert errors == []
+
+
+def test_check_risk_scoring_deterministic_flags_bad_arithmetic():
+    risk_assessment = [{
+        "ticker": "AAPL", "quality": "alta",
+        "scoring": {
+            "forza_catalizzatore": 5, "fit_orizzonte": 5, "asimmetria_narrativa": 5,
+            "qualita_evidenze": 5, "rischio_crowding": 5, "totale": 30,
+        },
+    }]
+    errors = check_risk_scoring_deterministic(risk_assessment)
+    assert any("totale=30" in e for e in errors)
+
+
+def test_check_risk_scoring_deterministic_ignores_dati_insufficienti():
+    risk_assessment = [{
+        "ticker": "AAPL", "quality": "dati_insufficienti",
+        "scoring": {
+            "forza_catalizzatore": 0, "fit_orizzonte": 0, "asimmetria_narrativa": 0,
+            "qualita_evidenze": 0, "rischio_crowding": 0, "totale": 5,
+        },
+    }]
+    assert check_risk_scoring_deterministic(risk_assessment) == []
+
+
+def test_check_compliance_format_flags_missing_and_empty_fields():
+    compliance_results = [{"ticker": "AAPL", "compliant": False, "policy_refs": [], "motivo": ""}]
+    errors = check_compliance_format_deterministic(compliance_results, ["AAPL", "MSFT"])
+    assert any("motivo" in e for e in errors)
+    assert any("policy_refs" in e for e in errors)
+    assert any("MSFT" in e for e in errors)
+
+
+def test_check_compliance_format_flags_duplicate():
+    compliance_results = [
+        {"ticker": "AAPL", "compliant": True, "policy_refs": [], "motivo": ""},
+        {"ticker": "AAPL", "compliant": True, "policy_refs": [], "motivo": ""},
+    ]
+    errors = check_compliance_format_deterministic(compliance_results, ["AAPL"])
+    assert any("duplicati" in e for e in errors)
+
+
+def test_check_compliance_format_clean():
+    compliance_results = [{"ticker": "AAPL", "compliant": True, "policy_refs": [], "motivo": ""}]
+    assert check_compliance_format_deterministic(compliance_results, ["AAPL"]) == []

@@ -55,14 +55,14 @@ def _mock_client(reply_text: str) -> MagicMock:
 
 def test_run_llm_qa_approved():
     client = _mock_client("QA: APPROVATO\nOk.")
-    approved, raw = run_llm_qa(client, "system prompt", "subject json")
+    approved, raw = run_llm_qa(client, "system prompt", "subject json", correlation_id="test", agent="test_agent")
     assert approved is True
     assert "APPROVATO" in raw
 
 
 def test_run_llm_qa_rejected():
     client = _mock_client("QA: DA_CORREGGERE\nProblema trovato.")
-    approved, raw = run_llm_qa(client, "system prompt", "subject json")
+    approved, raw = run_llm_qa(client, "system prompt", "subject json", correlation_id="test", agent="test_agent")
     assert approved is False
 
 
@@ -77,6 +77,6 @@ def test_run_llm_qa_skips_non_text_blocks():
     response.content = [thinking_block, text_block]
     client.messages.create.return_value = response
 
-    approved, raw = run_llm_qa(client, "system", "subject")
+    approved, raw = run_llm_qa(client, "system", "subject", correlation_id="test", agent="test_agent")
     assert approved is True
     assert raw == "QA: APPROVATO"
