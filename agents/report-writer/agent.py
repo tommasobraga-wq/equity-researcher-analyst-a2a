@@ -25,6 +25,7 @@ from shared.audit import current_correlation_id, log_event_fire_and_forget
 from shared.auth import enforce_secret_policy
 from shared.pricing import estimate_cost_usd
 from shared.qa import run_llm_qa
+from shared.validators import check_citation_ids_deterministic
 
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
 enforce_secret_policy()
@@ -116,12 +117,16 @@ _QA_SYSTEM = """Sei un revisore QA di report di ricerca azionaria. Oggi è {toda
 
 Controlla:
 1. Conformità schema JSON
-2. Ogni affermazione cita un ID notizia
-3. Nessuna direttiva buy/sell esplicita
-4. scoring.totale = somma esatta (ogni dimensione 1-10, max 50)
-5. consenso_analisti compilato per ogni candidato
-6. Tutto il testo in italiano corretto
-7. Date future coerenti (tutte dopo {today})
+2. Nessuna direttiva buy/sell esplicita
+3. scoring.totale = somma esatta (ogni dimensione 1-10, max 50)
+4. consenso_analisti compilato per ogni candidato
+5. Tutto il testo in italiano corretto
+6. Date future coerenti (tutte dopo {today})
+
+NON verificare la validità o la tracciabilità degli ID notizia (N1, N2...) citati: è già
+verificato deterministicamente a monte, in modo affidabile al 100%. Non serve che un ID
+citato ricorra altrove nel report per essere valido — non inventare questo o altri criteri
+non elencati sopra.
 
 Rispondi SOLO con:
 La prima riga esattamente "QA: APPROVATO" oppure "QA: DA_CORREGGERE" (senza parentesi), poi max 3 frasi di motivazione.
@@ -242,7 +247,24 @@ async def run_agent(task: A2ATask) -> A2ATaskResult:
         json_raw = _extract_section(report_raw, "=== JSON ===")
         json_clean = _extract_json(json_raw)
 
-        # Step 2 — QA review (shared mechanism, same as the other 4 agents)
+        # Parse JSON report
+        try:
+            report_dict = json.loads(json_clean)
+        except json.JSONDecodeError:
+            report_dict = {"raw": json_clean}
+
+        # Step 2 — deterministic citation check (zero LLM cost, no judgment
+        # call): every N# cited anywhere in the report must exist in the real
+        # `news` set fetched upstream. Runs before the QA-LLM pass so a
+        # fabricated/ungrounded citation is caught reliably instead of being
+        # left to an LLM reviewer that has no way to verify it (see
+        # docs/adr — the QA pass below only judges tone/consistency, not
+        # citation existence).
+        det_errors = check_citation_ids_deterministic({**report_dict, "_sintesi_esecutiva": sintesi}, news)
+        if det_errors:
+            return A2ATaskResult.invalid(task.id, " ".join(det_errors))
+
+        # Step 3 — QA review (shared mechanism, same as the other 4 agents)
         approved, qa_output = run_llm_qa(
             _client,
             _QA_SYSTEM.format(today=today),
@@ -252,12 +274,6 @@ async def run_agent(task: A2ATask) -> A2ATaskResult:
         )
         if not approved:
             return A2ATaskResult.invalid(task.id, qa_output)
-
-        # Parse JSON report
-        try:
-            report_dict = json.loads(json_clean)
-        except json.JSONDecodeError:
-            report_dict = {"raw": json_clean}
 
         return A2ATaskResult.ok(
             task.id,

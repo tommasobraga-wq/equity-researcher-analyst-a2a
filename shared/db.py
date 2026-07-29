@@ -184,6 +184,45 @@ async def save_run_state(
         )
 
 
+async def mark_run_failed(
+    run_id: str, tickers: list[str], fallback_state: dict[str, Any],
+) -> None:
+    """Flags a run as failed without clobbering its persisted `state` with
+    `fallback_state` if a snapshot already exists.
+
+    Used on an unhandled exception out of the graph (`_graph.ainvoke` raising):
+    `_with_persistence` already snapshotted state after every stage that
+    completed cleanly, so a plain upsert that always writes `state` would
+    erase that progress and silently break `--resume <run_id>` — it would
+    restart from `data_collector` instead of the last clean stage. `ON
+    CONFLICT` here only touches `status`/`updated_at`, preserving whatever
+    `state` a prior `save_run_state` call wrote. `fallback_state` is only
+    used for the INSERT branch — a run that fails before any stage ever
+    persisted (no row exists yet) still gets recorded, same as before.
+    Best-effort, same degrade-to-noop posture as `save_run_state`."""
+    try:
+        pool = await get_pool()
+        if pool is None:
+            return
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO pipeline_runs (run_id, tickers, status, last_stage, state, updated_at)
+                VALUES ($1, $2, 'failed', 'unknown', $3::jsonb, now())
+                ON CONFLICT (run_id) DO UPDATE SET
+                    status = 'failed',
+                    updated_at = now()
+                """,
+                run_id, tickers,
+                json.dumps(fallback_state, ensure_ascii=False, default=str),
+            )
+    except Exception as e:
+        _logger.warning(
+            f"Marking run as failed failed: {e}",
+            extra={"correlation_id": run_id, "event_type": "pipeline_run"},
+        )
+
+
 async def load_run_state(run_id: str) -> dict[str, Any] | None:
     """Returns the persisted state dict for `run_id`, or None if no run with
     that id was persisted (DATABASE_URL unset, unknown id, or a DB error —

@@ -40,6 +40,7 @@ from shared.db import (
     get_or_create_session,
     load_recent_turns,
     load_run_state,
+    mark_run_failed,
     save_run_state,
 )
 from shared.eligibility import (
@@ -1003,7 +1004,7 @@ async def run_pipeline(
     try:
         final_state = await _graph.ainvoke(initial_state)
     except Exception as e:
-        await save_run_state(run_id, initial_state["tickers"], "failed", "unknown", initial_state)
+        await mark_run_failed(run_id, initial_state["tickers"], initial_state)
         emit(run_id, "run_failed", error=str(e))
         end_stream(run_id)
         raise

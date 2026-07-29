@@ -50,6 +50,7 @@ _DIRECTIVE_RE = re.compile(
 )
 
 _NEWS_ID_RE = re.compile(r"^N\d+$")
+_NEWS_ID_RE_ANYWHERE = re.compile(r"\bN\d+\b")
 
 # Deterministic first line of defense against prompt injection smuggled in via
 # external content (RSS headlines/summaries, yfinance sector/industry) that
@@ -186,6 +187,33 @@ def check_compliance_format_deterministic(
         errors.append(f"Verdetti mancanti per: {', '.join(sorted(missing))}.")
 
     return errors
+
+
+def check_citation_ids_deterministic(report: dict, news: list[dict]) -> list[str]:
+    """Every news ID (N1, N2...) cited anywhere in the report — theme
+    'evidenze', candidate 'evidenze_citate', executive summary text — must
+    exist in the real news set fetched upstream. A cited ID absent from
+    that set is a fabricated/ungrounded citation; this is a pure set-
+    membership check, not a judgment call, so no LLM is needed (and no LLM
+    should invent extra criteria like requiring a citation to recur
+    elsewhere in the report, which is not what this checks)."""
+    valid_ids = {str(item.get("id", "")) for item in news}
+    cited_ids: set[str] = set()
+
+    for tema in report.get("temi", []) or []:
+        cited_ids.update(tema.get("evidenze", []) or [])
+    for candidato in report.get("candidati", []) or []:
+        cited_ids.update(candidato.get("evidenze_citate", []) or [])
+    text_blob = report.get("_sintesi_esecutiva", "") or ""
+    cited_ids.update(_NEWS_ID_RE_ANYWHERE.findall(text_blob))
+
+    unknown = sorted(cited_ids - valid_ids - {""})
+    if not unknown:
+        return []
+    return [
+        f"ID notizia citato ma inesistente nel set fornito: {', '.join(unknown)} "
+        f"(ID validi: {', '.join(sorted(valid_ids)) or 'nessuno'})."
+    ]
 
 
 def _full_text(c) -> str:

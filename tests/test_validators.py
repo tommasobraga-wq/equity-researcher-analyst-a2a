@@ -2,6 +2,7 @@
 from shared.models import Candidato, Report, Scoring
 from shared.validators import (
     check_candidates_deterministic,
+    check_citation_ids_deterministic,
     check_compliance_format_deterministic,
     check_risk_scoring_deterministic,
     validate,
@@ -158,3 +159,26 @@ def test_check_compliance_format_flags_duplicate():
 def test_check_compliance_format_clean():
     compliance_results = [{"ticker": "AAPL", "compliant": True, "policy_refs": [], "motivo": ""}]
     assert check_compliance_format_deterministic(compliance_results, ["AAPL"]) == []
+
+
+def test_check_citation_ids_flags_unknown_id():
+    news = [{"id": "N1"}, {"id": "N2"}]
+    report = {
+        "temi": [{"tema_id": "T1", "evidenze": ["N1", "N7"]}],
+        "candidati": [{"ticker": "AAPL", "evidenze_citate": ["N2"]}],
+        "_sintesi_esecutiva": "Come mostra N11, il titolo cresce.",
+    }
+    errors = check_citation_ids_deterministic(report, news)
+    assert len(errors) == 1
+    assert "N7" in errors[0]
+    assert "N11" in errors[0]
+
+
+def test_check_citation_ids_clean_when_all_ids_exist():
+    news = [{"id": "N1"}, {"id": "N2"}, {"id": "N7"}]
+    report = {
+        "temi": [{"tema_id": "T1", "evidenze": ["N1", "N7"]}],
+        "candidati": [{"ticker": "AAPL", "evidenze_citate": ["N2"]}],
+        "_sintesi_esecutiva": "Nessuna citazione qui.",
+    }
+    assert check_citation_ids_deterministic(report, news) == []
