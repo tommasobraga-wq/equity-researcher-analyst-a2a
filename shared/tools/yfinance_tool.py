@@ -102,6 +102,42 @@ def get_stock_fundamentals(ticker: str) -> dict:
         raise TimeoutError(f"yfinance timeout after {_TIMEOUT}s for {ticker}")
 
 
+def get_ticker_news(ticker: str, max_items: int = 5) -> list[dict]:
+    """Per-ticker news via yfinance (`Ticker.news`) — unlike the generic RSS
+    feeds (shared/tools/rss_feed.py, top-headlines, not company-targeted),
+    this is scoped to the requested ticker itself, so it can surface a
+    niche/local story (e.g. an EU-listed company's tender offer) that would
+    never make a generic top-30 global-headlines pool. Best-effort: returns
+    [] on timeout/error/no coverage rather than raising, since thin news
+    coverage for a given ticker is an expected outcome, not a failure."""
+    ticker = ticker.strip().upper()
+
+    def _fetch_news() -> list[dict]:
+        items = yf.Ticker(ticker).news or []
+        out = []
+        for item in items[:max_items]:
+            content = item.get("content", {}) or {}
+            provider = content.get("provider", {}) or {}
+            url = content.get("canonicalUrl", {}) or {}
+            out.append({
+                "headline": sanitize_external_text(content.get("title"), max_len=200),
+                "summary": sanitize_external_text(content.get("summary"), max_len=300),
+                "source": (
+                    sanitize_external_text(provider.get("displayName"), max_len=100)
+                    or "Yahoo Finance"
+                ),
+                "url": sanitize_external_text(url.get("url"), max_len=500),
+                "published": content.get("pubDate"),
+            })
+        return out
+
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            return executor.submit(_fetch_news).result(timeout=_TIMEOUT)
+    except Exception:
+        return []
+
+
 def get_daily_returns(ticker: str, days: int = 180) -> list[float]:
     """Daily close-to-close returns over the last `days` calendar days —
     used by Gate 3's pairwise-correlation check. Raises on timeout/error;

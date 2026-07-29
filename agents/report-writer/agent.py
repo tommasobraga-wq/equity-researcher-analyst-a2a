@@ -211,6 +211,7 @@ async def run_agent(task: A2ATask) -> A2ATaskResult:
     allocation = input_data.get("allocation", [])
     nota_strategia = input_data.get("nota_strategia", "")
     feedback = input_data.get("validation_feedback", "")
+    tickers_without_coverage = input_data.get("tickers_without_coverage", [])
 
     user_prompt = (
         f"Oggi è {today}.\n\n"
@@ -219,6 +220,12 @@ async def run_agent(task: A2ATask) -> A2ATaskResult:
         f"CANDIDATI:\n<equity_candidates>\n{json.dumps(candidates, ensure_ascii=False)}\n</equity_candidates>\n\n"
         f"VALUTAZIONE RISCHI:\n<risk_assessment>\n{json.dumps(risk_assessment, ensure_ascii=False)}\n</risk_assessment>\n\n"
     )
+    if tickers_without_coverage:
+        user_prompt += (
+            f"NOTA — nessuna notizia specifica trovata per: "
+            f"{', '.join(tickers_without_coverage)}. Menzionalo esplicitamente in "
+            f"nota_metodologica (non far finta che la copertura sia completa).\n\n"
+        )
     if allocation:
         user_prompt += (
             f"ALLOCAZIONE DI PORTAFOGLIO (approvata dal Portfolio Manager — i pesi sono "

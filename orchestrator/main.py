@@ -92,6 +92,7 @@ class PipelineState(TypedDict):
     mode: str  # "specific" | "discovery" — chosen once by the coordinator, drives entry topology
     tickers: list[str]
     candidate_tickers: list[str]  # populated by news_sentiment_discovery in "discovery" mode
+    tickers_without_coverage: list[str]  # requested tickers read_ticker_news found nothing for
     focus: str
     priority_sectors: list[str]
     excluded_sectors: list[str]
@@ -334,11 +335,19 @@ async def _collect_fundamentals(
     }
 
 
-async def _fetch_news(state: PipelineState, focus: str, stage: str = "news_sentiment") -> dict:
+async def _fetch_news(
+    state: PipelineState, focus: str, stage: str = "news_sentiment",
+    tickers: list[str] | None = None,
+) -> dict:
     """Core NewsSentiment call — reused by both topologies. Also returns
     `candidate_tickers` (companies mentioned in the selected news), which
     "discovery" mode uses to feed DataCollector next; "specific" mode ignores
-    it (tickers are already known from the user)."""
+    it (tickers are already known from the user).
+
+    `tickers`, when given (mode="specific" only — "discovery" has none yet),
+    triggers per-ticker news lookups (read_ticker_news) alongside the generic
+    RSS scan, so a niche/local story about a named company isn't missed just
+    because it never makes the generic top-headlines pool."""
     print("      NewsSentiment ← fetching RSS feeds")
     feedback = state["validation_feedback"].get(stage, "")
     result = await send_task_with_retry(
@@ -349,6 +358,7 @@ async def _fetch_news(state: PipelineState, focus: str, stage: str = "news_senti
             "priority_sectors": state["priority_sectors"],
             "excluded_sectors": state["excluded_sectors"],
             "focus": focus,
+            "tickers": tickers or [],
             "validation_feedback": feedback,
         },
         timeout=180.0,
@@ -361,12 +371,14 @@ async def _fetch_news(state: PipelineState, focus: str, stage: str = "news_senti
     news = _extract_data(result, "news") or []
     themes = _extract_data(result, "themes") or []
     candidate_tickers = _extract_data(result, "candidate_tickers") or []
+    tickers_without_coverage = _extract_data(result, "tickers_without_coverage") or []
     if not news:
         for part in result.message.parts:
             if hasattr(part, "data"):
                 news = part.data.get("news", [])
                 themes = part.data.get("themes", [])
                 candidate_tickers = part.data.get("candidate_tickers", [])
+                tickers_without_coverage = part.data.get("tickers_without_coverage", [])
                 break
 
     _, violations = validate_stage("news_themes", {"news": news, "themes": themes})
@@ -378,8 +390,11 @@ async def _fetch_news(state: PipelineState, focus: str, stage: str = "news_senti
         f"      → {len(news)} news, {len(themes)} themes, "
         f"{len(candidate_tickers)} candidate ticker(s)"
     )
+    if tickers_without_coverage:
+        print(f"      ⚠ No ticker-specific news found for: {', '.join(tickers_without_coverage)}")
     return {
         "news": news, "themes": themes, "candidate_tickers": candidate_tickers,
+        "tickers_without_coverage": tickers_without_coverage,
         "retries": {**state["retries"], stage: 0},
     }
 
@@ -422,7 +437,11 @@ async def node_data_news_parallel(state: PipelineState) -> dict:
     if need_dc:
         coros.append(_collect_fundamentals(state, state["tickers"], stage_dc))
     if need_ns:
-        coros.append(_fetch_news(state, focus=state.get("focus", ""), stage=stage_ns))
+        coros.append(
+            _fetch_news(
+                state, focus=state.get("focus", ""), stage=stage_ns, tickers=state["tickers"],
+            ),
+        )
 
     results = await asyncio.gather(*coros) if coros else []
     return _merge_partial_results(state, results)
@@ -703,6 +722,7 @@ async def node_report_writer(state: PipelineState) -> dict:
             "risk_assessment": state["risk_assessment"],
             "news": state["news"],
             "themes": state["themes"],
+            "tickers_without_coverage": state.get("tickers_without_coverage", []),
             "allocation": state.get("allocation", []),
             "nota_strategia": state.get("nota_strategia", ""),
             "validation_feedback": feedback,
@@ -971,6 +991,7 @@ async def run_pipeline(
             "mode": mode,
             "tickers": tickers,
             "candidate_tickers": [],
+            "tickers_without_coverage": [],
             "focus": focus,
             "priority_sectors": priority_sectors,
             "excluded_sectors": excluded_sectors,
