@@ -44,7 +44,9 @@ def fetch_rss_news(max_items_per_feed: int = _ITEMS_PER_FEED) -> str:
                     entry.get("summary", entry.get("description", "")), max_len=300
                 )
                 link = sanitize_external_text(entry.get("link", ""), max_len=500)
-                items.append(f"[{source}] {title}\n{summary}\nURL: {link}")
+                published = sanitize_external_text(entry.get("published", ""), max_len=60)
+                published_line = f"\nPublished: {published}" if published else ""
+                items.append(f"[{source}] {title}{published_line}\n{summary}\nURL: {link}")
         else:
             failed.append(source)
 
