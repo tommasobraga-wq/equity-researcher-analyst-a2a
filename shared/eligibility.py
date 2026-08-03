@@ -11,6 +11,7 @@ at two different points in the pipeline:
   exists after DataCollector has fetched fundamentals — runs immediately
   after that, before FundamentalAnalyst spends any further work on them.
 """
+import re
 from pathlib import Path
 from typing import Any
 
@@ -133,6 +134,51 @@ def check_data_quality(
                 ),
             })
     return eligible, dropped
+
+
+def check_sector_scope(
+    fundamentals: list[dict[str, Any]], priority_sectors: list[str],
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    """Splits `fundamentals` into (eligible, blocked) by matching each record's
+    sector/industry against `priority_sectors`, expanded via
+    shared.sector_seed.expand_sector_keywords into the keyword set that
+    actually matches yfinance's own sector/industry taxonomy — the user's
+    free-text sector ("automotive") often does not literally appear there
+    (Tesla is sector="Consumer Cyclical", industry="Auto Manufacturers"), so
+    a plain substring match on `priority_sectors` alone would wrongly reject
+    genuine matches. Same "keep only matches" mechanics as
+    check_esg_exclusions but inverted (that one drops matches).
+
+    Only call this when the user explicitly scoped the request to specific
+    sector(s) — NewsSentiment's discovery prompt treats priority_sectors as a
+    soft preference ("prefer, don't exclude"), so an out-of-scope candidate
+    (e.g. a Healthcare ticker surfacing from generic RSS coverage when the
+    user asked for "resources/utilities") can otherwise slip through to the
+    final report. Do not use this for the default soft priority-sector nudge."""
+    from shared.sector_seed import expand_sector_keywords
+
+    # Word-boundary match, not plain substring: a naive "s in haystack" lets
+    # a short keyword like "car" (from the automotive keyword set) falsely
+    # match inside an unrelated word (e.g. "Healthcare").
+    patterns = [
+        re.compile(r"\b" + re.escape(s) + r"\b")
+        for s in expand_sector_keywords(priority_sectors)
+    ]
+
+    eligible: list[dict[str, Any]] = []
+    blocked: list[dict[str, str]] = []
+    for record in fundamentals:
+        haystack = f"{record.get('sector', '')} {record.get('industry', '')}".lower()
+        if any(p.search(haystack) for p in patterns):
+            eligible.append(record)
+        else:
+            blocked.append({
+                "ticker": record.get("ticker", ""),
+                "motivo_esclusione": (
+                    f"Fuori dal settore richiesto ({', '.join(priority_sectors)})."
+                ),
+            })
+    return eligible, blocked
 
 
 def check_esg_exclusions(

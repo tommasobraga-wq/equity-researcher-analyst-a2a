@@ -48,7 +48,9 @@ from shared.eligibility import (
     check_esg_exclusions,
     check_market_perimeter,
     check_restricted_list,
+    check_sector_scope,
 )
+from shared.sector_seed import load_sector_seed_tickers
 from shared.events import emit, end_stream
 from shared.log import get_logger
 from shared.models import Report
@@ -96,6 +98,8 @@ class PipelineState(TypedDict):
     focus: str
     priority_sectors: list[str]
     excluded_sectors: list[str]
+    explicit_sector_scope: bool  # True only when the user named a sector in a "discovery" prompt
+    sector_fallback_note: str  # set when the sector-seed fallback below actually supplied candidates
     fundamentals: list
     news: list
     themes: list
@@ -319,17 +323,39 @@ async def _collect_fundamentals(
         print(f"      ⚠ Gate 1 (ESG): {len(esg_blocked)} ticker(s) blocked — {esg_str}")
         emit(state.get("run_id"), "gate1_block", check="esg", blocked=esg_blocked)
 
+    # Gate 1 (sector scope) — only in "discovery" mode, and only when the user
+    # explicitly named a sector in the prompt (state["explicit_sector_scope"]).
+    # NewsSentiment's discovery prompt treats priority_sectors as a soft
+    # preference ("prefer, don't exclude"), so without this a candidate from an
+    # unrelated sector (e.g. Healthcare surfacing from generic RSS coverage
+    # when the user asked for "resources/utilities") can reach the final
+    # report. Never applied in "specific" mode — the user already picked the
+    # tickers directly there, so sector scoping isn't meaningful.
+    sector_blocked: list[dict[str, str]] = []
+    if state.get("mode") == "discovery" and state.get("explicit_sector_scope"):
+        eligible_fundamentals, sector_blocked = check_sector_scope(
+            eligible_fundamentals, state["priority_sectors"],
+        )
+        if sector_blocked:
+            sector_str = ", ".join(b["ticker"] for b in sector_blocked)
+            print(
+                f"      ⚠ Gate 1 (settore): "
+                f"{len(sector_blocked)} ticker(s) fuori scope — {sector_str}"
+            )
+            emit(state.get("run_id"), "gate1_block", check="sector_scope", blocked=sector_blocked)
+
     if not eligible_fundamentals:
         raise RuntimeError(
             "Nessun candidato con dati fondamentali validi dopo i filtri Gate 1 "
-            "(dati mancanti / perimetro US-EU / ESG) — nulla da analizzare."
+            "(dati mancanti / perimetro US-EU / ESG / settore) — nulla da analizzare."
         )
 
     print(f"      → {len(eligible_fundamentals)} ticker(s) fetched")
     return {
         "fundamentals": eligible_fundamentals,
         "gate1_excluded": [
-            *state.get("gate1_excluded", []), *data_dropped, *geo_blocked, *esg_blocked,
+            *state.get("gate1_excluded", []),
+            *data_dropped, *geo_blocked, *esg_blocked, *sector_blocked,
         ],
         "retries": {**state["retries"], stage: 0},
     }
@@ -357,6 +383,7 @@ async def _fetch_news(
         data={
             "priority_sectors": state["priority_sectors"],
             "excluded_sectors": state["excluded_sectors"],
+            "explicit_sector_scope": state.get("explicit_sector_scope", False),
             "focus": focus,
             "tickers": tickers or [],
             "validation_feedback": feedback,
@@ -454,40 +481,175 @@ async def node_news_sentiment_discovery(state: PipelineState) -> dict:
     return await _fetch_news(state, focus=state.get("focus", ""), stage="news_sentiment")
 
 
+async def _try_sector_seed_fallback(state: PipelineState, exclude: list[str]) -> dict | None:
+    """Best-effort recovery for "discovery" mode when nothing survives to
+    analysis for an explicitly requested sector (state["explicit_sector_scope"])
+    — whether NewsSentiment proposed zero candidates, or everything it did
+    propose got rejected downstream (restricted list, bad data, market
+    perimeter, ESG, sector scope). Runs one extra NewsSentiment call
+    targeting a small curated list of well-known tickers for the sector
+    (policies/sector_tickers.yaml, via shared/sector_seed.py), through the
+    same per-ticker read_ticker_news lookup already used in "specific" mode
+    — a real, fresh search, just company-scoped instead of headline-scoped.
+
+    Called from a single place — node_data_collector_from_candidates, after
+    the primary candidates' true fate is known — not from
+    node_news_sentiment_discovery: an earlier "NewsSentiment proposed
+    nothing" check can't yet know whether a later Gate 1 rejection is
+    coming, so triggering there would miss exactly the case this exists to
+    catch (candidates proposed, all later rejected).
+
+    Returns None if no seed list matches the sector, or if the fallback
+    search itself finds nothing — callers must not fabricate candidates in
+    that case, just report the gap honestly."""
+    seed_tickers = [t for t in load_sector_seed_tickers(state["priority_sectors"]) if t not in exclude]
+    if not seed_tickers:
+        return None
+
+    sectors_str = ", ".join(state["priority_sectors"])
+    seed_str = ", ".join(seed_tickers)
+    print(
+        f"      ⚠ Nessun candidato utilizzabile per il settore richiesto ({sectors_str}) — "
+        f"fallback: ricerca dedicata su ticker noti del settore ({seed_str})"
+    )
+    emit(
+        state.get("run_id"), "sector_fallback",
+        sectors=state["priority_sectors"], seed_tickers=seed_tickers,
+    )
+    try:
+        fallback_result = await _fetch_news(
+            state, focus=state.get("focus", ""),
+            stage="news_sentiment_sector_fallback", tickers=seed_tickers,
+        )
+    except RuntimeError as e:
+        print(f"      ⚠ Fallback settoriale non riuscito: {e}")
+        return None
+
+    if "news" not in fallback_result:
+        print("      ⚠ Fallback settoriale: risposta non valida, nessun dato utilizzabile.")
+        return None
+
+    covered = [t for t in seed_tickers if t not in fallback_result.get("tickers_without_coverage", [])]
+    if not covered:
+        print("      ⚠ Fallback settoriale: nessuna notizia trovata nemmeno sui ticker noti del settore.")
+        return None
+
+    covered_str = ", ".join(covered)
+    return {
+        "news": fallback_result.get("news", []),
+        "themes": fallback_result.get("themes", []),
+        "candidate_tickers": covered,
+        "note": (
+            f"Nessun candidato utilizzabile dal flusso notizie primario per il settore "
+            f"richiesto ({sectors_str}); sono stati verificati ticker noti del settore "
+            f"({seed_str}) tramite ricerca notizie dedicata per singola azienda, con esito "
+            f"positivo per: {covered_str}."
+        ),
+    }
+
+
 async def node_data_collector_from_candidates(state: PipelineState) -> dict:
     """"discovery" mode, stage 2: fetch fundamentals for the candidates
     NewsSentiment proposed in stage 1 — after Gate 1's restricted-list check
-    (pure ticker match, no fundamentals needed for this part of Gate 1)."""
+    (pure ticker match, no fundamentals needed for this part of Gate 1).
+    See _try_sector_seed_fallback's docstring for the sector-fallback path.
+
+    A prior attempt already exhausted, not just "empty": DataCollector's own
+    QA (agents/data-collector/agent.py::_QA_SYSTEM) rejects a batch where
+    NOT ONE ticker has usable price data — a real, correct rejection when
+    every proposed candidate turns out bogus/delisted, but retrying the
+    identical tickers through the graph's normal validation-retry loop
+    would just fetch the same data and fail identically up to
+    MAX_VALIDATION_RETRIES, burning calls before this node ever gets a
+    second look. So: once state["retries"]["data_collector"] shows a prior
+    attempt already failed for these exact candidates, skip retrying them
+    and go straight to the sector fallback instead — same trigger point as
+    the "everything got Gate-1-rejected" case, just reached one step
+    earlier, before Gate 1 even runs, because the agent-level QA rejected
+    the whole batch first."""
     tickers = state.get("candidate_tickers") or []
-    # Distinguish "NewsSentiment proposed nothing" from "everything proposed was
-    # blocked by the restricted list" — same dead-end, but very different causes,
-    # so the operator/UI sees which one actually happened.
-    if not tickers:
+    restricted_blocked: list[dict] = []
+    eligible_tickers: list[str] = []
+    already_retried = state["retries"].get("data_collector", 0) > 0
+    result: dict | None = None
+
+    if tickers:
+        eligible_tickers, restricted_blocked = check_restricted_list(tickers)
+        if restricted_blocked:
+            print(
+                f"      ⚠ Gate 1 (restricted list): "
+                f"{len(restricted_blocked)} candidate ticker(s) blocked"
+            )
+            emit(
+                state.get("run_id"), "gate1_block",
+                check="restricted_list", blocked=restricted_blocked,
+            )
+        if eligible_tickers and already_retried:
+            print(
+                "      ⚠ DataCollector: tentativo precedente già respinto per questi "
+                "candidati — salto il retry, provo il fallback settoriale"
+            )
+        elif eligible_tickers:
+            print(f"\n[2/5] DataCollector (from candidates) ← {', '.join(eligible_tickers)}")
+            augmented_state = {
+                **state, "gate1_excluded": [*state.get("gate1_excluded", []), *restricted_blocked],
+            }
+            try:
+                attempt = await _collect_fundamentals(augmented_state, eligible_tickers, "data_collector")
+            except RuntimeError:
+                attempt = None
+            if attempt is not None and "fundamentals" not in attempt:
+                # Agent-level QA rejected the batch (invalid, not a hard
+                # RuntimeError) — let the normal retry loop record it; the
+                # fallback only kicks in on the next pass (already_retried
+                # branch above), not mid-attempt.
+                return attempt
+            result = attempt
+
+    if result is None and state.get("mode") == "discovery" and state.get("explicit_sector_scope"):
+        fallback = await _try_sector_seed_fallback(state, tickers)
+        if fallback:
+            fb_tickers, fb_restricted = check_restricted_list(fallback["candidate_tickers"])
+            if fb_tickers:
+                augmented_state = {
+                    **state,
+                    "gate1_excluded": [*state.get("gate1_excluded", []), *restricted_blocked, *fb_restricted],
+                }
+                try:
+                    fb_collected = await _collect_fundamentals(augmented_state, fb_tickers, "data_collector")
+                except RuntimeError:
+                    fb_collected = None
+                if fb_collected is not None and "fundamentals" not in fb_collected:
+                    return fb_collected  # same invalid-batch handling as above, for the fallback tickers
+                if fb_collected is not None:
+                    result = {
+                        **fb_collected,
+                        "news": [*state.get("news", []), *fallback["news"]],
+                        "themes": [*state.get("themes", []), *fallback["themes"]],
+                        "candidate_tickers": fb_tickers,
+                        "sector_fallback_note": fallback["note"],
+                    }
+
+    if result is None:
+        if state.get("explicit_sector_scope"):
+            raise RuntimeError(
+                "Nessuna opportunità azionaria identificata per il settore richiesto "
+                f"({', '.join(state.get('priority_sectors', []))}): né la rassegna stampa "
+                "generica né la ricerca dedicata sui titoli noti del settore hanno prodotto "
+                "candidati validi al momento dell'analisi. Riprova più tardi o allarga la "
+                "richiesta ad altri settori."
+            )
+        if not tickers:
+            raise RuntimeError(
+                "NewsSentiment non ha proposto alcun candidate ticker da analizzare "
+                "(nessuna opportunità azionaria identificata nelle notizie correnti)."
+            )
         raise RuntimeError(
-            "NewsSentiment non ha proposto alcun candidate ticker da analizzare "
-            "(nessuna opportunità azionaria identificata nelle notizie correnti)."
-        )
-    eligible_tickers, restricted_blocked = check_restricted_list(tickers)
-    if restricted_blocked:
-        print(
-            f"      ⚠ Gate 1 (restricted list): "
-            f"{len(restricted_blocked)} candidate ticker(s) blocked"
-        )
-        emit(
-            state.get("run_id"), "gate1_block",
-            check="restricted_list", blocked=restricted_blocked,
-        )
-    if not eligible_tickers:
-        raise RuntimeError(
-            "Tutti i candidate ticker proposti da NewsSentiment sono in restricted list "
-            "(Gate 1) — nulla da analizzare."
+            "Nessun candidato con dati fondamentali validi dopo i filtri Gate 1 "
+            "(restricted list / dati mancanti / perimetro US-EU / ESG) — nulla da analizzare."
         )
 
-    print(f"\n[2/5] DataCollector (from candidates) ← {', '.join(eligible_tickers)}")
-    augmented_state = {
-        **state, "gate1_excluded": [*state.get("gate1_excluded", []), *restricted_blocked],
-    }
-    return await _collect_fundamentals(augmented_state, eligible_tickers, "data_collector")
+    return result
 
 
 async def node_fundamental_analyst(state: PipelineState) -> dict:
@@ -756,6 +918,16 @@ async def node_report_writer(state: PipelineState) -> dict:
         report["allocazione"] = state["allocation"]
         report["nota_allocazione"] = state.get("nota_strategia", "")
 
+    # Same deterministic-merge rule for transparency about the sector-seed
+    # fallback (node_news_sentiment_discovery): if it supplied the candidates,
+    # the user must see it in the report, not just in the console/audit log.
+    if state.get("sector_fallback_note"):
+        existing = report.get("nota_metodologica", "")
+        report["nota_metodologica"] = (
+            f"{existing} {state['sector_fallback_note']}".strip()
+            if existing else state["sector_fallback_note"]
+        )
+
     try:
         report_model = Report(**report)
     except Exception:
@@ -951,6 +1123,7 @@ async def run_pipeline(
     priority_sectors: list[str],
     excluded_sectors: list[str],
     focus: str = "",
+    explicit_sector_scope: bool = False,
     resume_run_id: str | None = None,
     run_id: str | None = None,
     open_browser: bool = True,
@@ -995,6 +1168,8 @@ async def run_pipeline(
             "focus": focus,
             "priority_sectors": priority_sectors,
             "excluded_sectors": excluded_sectors,
+            "explicit_sector_scope": explicit_sector_scope,
+            "sector_fallback_note": "",
             "fundamentals": [],
             "news": [],
             "themes": [],
@@ -1174,6 +1349,7 @@ async def _interactive_loop(
                 priority_sectors=priority_sectors,
                 excluded_sectors=excluded_sectors,
                 focus=intent.focus,
+                explicit_sector_scope=bool(intent.priority_sectors),
             )
         except Exception as e:
             print(f"⚠ Pipeline fallita: {e}")

@@ -104,6 +104,7 @@ async def chat(req: ChatRequest):
                 priority_sectors=intent.priority_sectors or _DEFAULT_PRIORITY,
                 excluded_sectors=intent.excluded_sectors or _DEFAULT_EXCLUDED,
                 focus=intent.focus,
+                explicit_sector_scope=bool(intent.priority_sectors),
                 run_id=run_id,
                 open_browser=False,
             )

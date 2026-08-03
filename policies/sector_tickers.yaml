@@ -1,0 +1,77 @@
+# Sector reference map — used by TWO deterministic mechanisms in
+# shared/sector_seed.py:
+#
+# 1. Fallback seed tickers (load_sector_seed_tickers): when, in "discovery"
+#    mode, the user explicitly requested a sector and NewsSentiment's generic
+#    RSS scan found no candidates for it, a second NewsSentiment call targets
+#    `tickers` below via the same per-ticker read_ticker_news lookup already
+#    used in "specific" mode — a real, fresh search, just company-scoped
+#    instead of headline-scoped. Always surfaced to the user via
+#    nota_metodologica in the final report — never silent.
+#
+# 2. Keyword expansion for Gate 1's sector-scope check
+#    (shared.eligibility.check_sector_scope): the user's free-text sector
+#    ("automotive") often does not literally appear in yfinance's own
+#    sector/industry taxonomy (e.g. Tesla is sector="Consumer Cyclical",
+#    industry="Auto Manufacturers" — "automotive" is a substring of neither).
+#    `keywords` bridges that gap so a real match isn't rejected as
+#    out-of-scope.
+#
+# Not exhaustive by design: the sector name is free text extracted by the
+# coordinator from the user's prompt. If a requested sector has no matching
+# entry here, no fallback is attempted and Gate 1 falls back to a literal
+# match on the requested text — the pipeline reports the gap honestly
+# instead of guessing either way.
+#
+# All tickers are US/EU-27 issuers per the domain's market perimeter
+# (UK/Switzerland/other excluded) — Gate 1's check_market_perimeter still
+# re-verifies this by issuer domicile regardless, as it does for every
+# candidate from any source.
+
+automotive:
+  keywords: [auto, automotive, vehicle, car]
+  tickers: [TSLA, F, GM, STLA, VOW3.DE]
+
+energy:
+  keywords: [energy, oil, gas]
+  tickers: [XOM, CVX, COP, TTE, ENI.MI]
+
+resources:
+  keywords: [resources, energy, oil, gas, mining, basic materials]
+  tickers: [XOM, CVX, TTE, ENI.MI, REP.MC]
+
+utilities:
+  keywords: [utilities, utility, electric, power]
+  tickers: [NEE, DUK, SO, ENEL.MI, IBE.MC]
+
+healthcare:
+  keywords: [healthcare, health, drug, pharma, pharmaceutical, biotech]
+  tickers: [JNJ, PFE, MRK, SAN.PA, NVO]
+
+pharma:
+  keywords: [pharma, pharmaceutical, drug, healthcare, biotech]
+  tickers: [JNJ, PFE, MRK, SAN.PA, NVO]
+
+industrials:
+  keywords: [industrial, industrials, aerospace, defense, manufacturing]
+  tickers: [GE, HON, CAT, SIE.DE, SU.PA]
+
+materials:
+  keywords: [materials, chemicals, mining, basic materials]
+  tickers: [LIN, APD, ECL, BAS.DE, MT.AS]
+
+real estate:
+  keywords: [real estate, reit, property]
+  tickers: [PLD, AMT, SPG, O, VNA.DE]
+
+telecom:
+  keywords: [telecom, telecommunications, communication services]
+  tickers: [VZ, T, DTE.DE, ORAN, TEF.MC]
+
+consumer discretionary:
+  keywords: [consumer discretionary, consumer cyclical, retail]
+  tickers: [AMZN, MCD, NKE, HD, MC.PA]
+
+consumer staples:
+  keywords: [consumer staples, consumer defensive, household]
+  tickers: [PG, KO, PEP, BN.PA, OR.PA]
