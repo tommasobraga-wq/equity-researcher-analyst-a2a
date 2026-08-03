@@ -13,6 +13,7 @@ grafo con due topologie scelte dinamicamente in base al prompt utente:
     news_sentiment_discovery (8002) → data_collector_from_candidates (8001)
       → fundamental_analyst (8003) → risk_assessor (8004) → report_writer (8005)
 """
+
 import asyncio
 import json
 import os
@@ -50,12 +51,12 @@ from shared.eligibility import (
     check_restricted_list,
     check_sector_scope,
 )
-from shared.sector_seed import load_sector_seed_tickers
 from shared.events import emit, end_stream
 from shared.log import get_logger
 from shared.models import Report
 from shared.portfolio import check_portfolio_limits, load_limits
 from shared.report import generate_html
+from shared.sector_seed import load_sector_seed_tickers
 from shared.tools.yfinance_tool import get_daily_returns
 from shared.validators import validate_stage
 
@@ -69,13 +70,13 @@ _coordinator_client = anthropic.AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_
 # docker-compose, where agents are reached by service name, not localhost).
 # Defaults are unchanged for local uv run/start.sh usage.
 AGENTS = {
-    "data_collector":      os.getenv("DATA_COLLECTOR_URL", "http://localhost:8001"),
-    "news_sentiment":      os.getenv("NEWS_SENTIMENT_URL", "http://localhost:8002"),
+    "data_collector": os.getenv("DATA_COLLECTOR_URL", "http://localhost:8001"),
+    "news_sentiment": os.getenv("NEWS_SENTIMENT_URL", "http://localhost:8002"),
     "fundamental_analyst": os.getenv("FUNDAMENTAL_ANALYST_URL", "http://localhost:8003"),
-    "risk_assessor":       os.getenv("RISK_ASSESSOR_URL", "http://localhost:8004"),
-    "report_writer":       os.getenv("REPORT_WRITER_URL", "http://localhost:8005"),
-    "compliance_agent":    os.getenv("COMPLIANCE_AGENT_URL", "http://localhost:8006"),
-    "portfolio_manager":   os.getenv("PORTFOLIO_MANAGER_URL", "http://localhost:8007"),
+    "risk_assessor": os.getenv("RISK_ASSESSOR_URL", "http://localhost:8004"),
+    "report_writer": os.getenv("REPORT_WRITER_URL", "http://localhost:8005"),
+    "compliance_agent": os.getenv("COMPLIANCE_AGENT_URL", "http://localhost:8006"),
+    "portfolio_manager": os.getenv("PORTFOLIO_MANAGER_URL", "http://localhost:8007"),
 }
 
 MAX_VALIDATION_RETRIES = 2
@@ -89,6 +90,7 @@ def _feedback_text(violations) -> str:
 # Pipeline state                                                       #
 # ------------------------------------------------------------------ #
 
+
 class PipelineState(TypedDict):
     run_id: str
     mode: str  # "specific" | "discovery" — chosen once by the coordinator, drives entry topology
@@ -99,7 +101,7 @@ class PipelineState(TypedDict):
     priority_sectors: list[str]
     excluded_sectors: list[str]
     explicit_sector_scope: bool  # True only when the user named a sector in a "discovery" prompt
-    sector_fallback_note: str  # set when the sector-seed fallback below actually supplied candidates
+    sector_fallback_note: str  # set when the sector-seed fallback actually supplied candidates
     fundamentals: list
     news: list
     themes: list
@@ -121,6 +123,7 @@ class PipelineState(TypedDict):
 # ------------------------------------------------------------------ #
 # A2A client                                                           #
 # ------------------------------------------------------------------ #
+
 
 def _a2a_secret() -> str | None:
     return os.getenv("A2A_SHARED_SECRET") or None
@@ -157,7 +160,10 @@ async def send_task(
         headers["X-A2A-Signature"] = sign(secret, body, req_timestamp)
 
     await log_event(
-        task_id, "a2a_request", agent_name, direction="outbound",
+        task_id,
+        "a2a_request",
+        agent_name,
+        direction="outbound",
         payload={"message": message, "data": data},
     )
 
@@ -177,21 +183,35 @@ async def send_task(
 
     if rpc_resp.error:
         await log_event(
-            task_id, "a2a_response", agent_name, direction="inbound",
-            payload={"error": rpc_resp.error}, status="error", duration_ms=duration_ms,
+            task_id,
+            "a2a_response",
+            agent_name,
+            direction="inbound",
+            payload={"error": rpc_resp.error},
+            status="error",
+            duration_ms=duration_ms,
         )
         raise RuntimeError(f"Agent error: {rpc_resp.error}")
 
     result = A2ATaskResult(**rpc_resp.result)
     await log_event(
-        task_id, "a2a_response", agent_name, direction="inbound",
-        payload=result.model_dump(), status=result.status, duration_ms=duration_ms,
+        task_id,
+        "a2a_response",
+        agent_name,
+        direction="inbound",
+        payload=result.model_dump(),
+        status=result.status,
+        duration_ms=duration_ms,
     )
     return result
 
 
 _RATE_LIMIT_KEYWORDS = (
-    "rate_limit", "rate limit", "too many requests", "concurrent connections", "429",
+    "rate_limit",
+    "rate limit",
+    "too many requests",
+    "concurrent connections",
+    "429",
 )
 
 
@@ -238,8 +258,14 @@ def _record_invalid(state: PipelineState, stage: str, feedback: str) -> dict:
     LangGraph's partial-state merge keeps whatever was there before."""
     retries = state["retries"].get(stage, 0) + 1
     print(f"      ⚠ Validation failed (attempt {retries}/{MAX_VALIDATION_RETRIES}): {feedback}")
-    emit(state.get("run_id"), "stage_retry", stage=stage, attempt=retries,
-         max_retries=MAX_VALIDATION_RETRIES, feedback=feedback)
+    emit(
+        state.get("run_id"),
+        "stage_retry",
+        stage=stage,
+        attempt=retries,
+        max_retries=MAX_VALIDATION_RETRIES,
+        feedback=feedback,
+    )
     _logger.warning(
         f"Validation failed (attempt {retries}/{MAX_VALIDATION_RETRIES}): {feedback}",
         extra={"agent": stage, "event_type": "validation_failed"},
@@ -254,8 +280,11 @@ def _record_invalid(state: PipelineState, stage: str, feedback: str) -> dict:
 # Graph nodes                                                          #
 # ------------------------------------------------------------------ #
 
+
 async def _collect_fundamentals(
-    state: PipelineState, tickers: list[str], stage: str = "data_collector",
+    state: PipelineState,
+    tickers: list[str],
+    stage: str = "data_collector",
 ) -> dict:
     """Core DataCollector call — reused by both the "specific" (parallel with
     news_sentiment) and "discovery" (fed by news_sentiment's candidates)
@@ -307,10 +336,7 @@ async def _collect_fundamentals(
     perimeter_fundamentals, geo_blocked = check_market_perimeter(priced_fundamentals)
     if geo_blocked:
         geo_str = ", ".join(b["ticker"] for b in geo_blocked)
-        print(
-            f"      ⚠ Gate 1 (perimetro US/EU): "
-            f"{len(geo_blocked)} ticker(s) esclusi — {geo_str}"
-        )
+        print(f"      ⚠ Gate 1 (perimetro US/EU): {len(geo_blocked)} ticker(s) esclusi — {geo_str}")
         emit(state.get("run_id"), "gate1_block", check="market_perimeter", blocked=geo_blocked)
 
     # Gate 1 (ESG) — needs sector/industry, only available now that fundamentals
@@ -334,7 +360,8 @@ async def _collect_fundamentals(
     sector_blocked: list[dict[str, str]] = []
     if state.get("mode") == "discovery" and state.get("explicit_sector_scope"):
         eligible_fundamentals, sector_blocked = check_sector_scope(
-            eligible_fundamentals, state["priority_sectors"],
+            eligible_fundamentals,
+            state["priority_sectors"],
         )
         if sector_blocked:
             sector_str = ", ".join(b["ticker"] for b in sector_blocked)
@@ -355,14 +382,19 @@ async def _collect_fundamentals(
         "fundamentals": eligible_fundamentals,
         "gate1_excluded": [
             *state.get("gate1_excluded", []),
-            *data_dropped, *geo_blocked, *esg_blocked, *sector_blocked,
+            *data_dropped,
+            *geo_blocked,
+            *esg_blocked,
+            *sector_blocked,
         ],
         "retries": {**state["retries"], stage: 0},
     }
 
 
 async def _fetch_news(
-    state: PipelineState, focus: str, stage: str = "news_sentiment",
+    state: PipelineState,
+    focus: str,
+    stage: str = "news_sentiment",
     tickers: list[str] | None = None,
 ) -> dict:
     """Core NewsSentiment call — reused by both topologies. Also returns
@@ -420,7 +452,9 @@ async def _fetch_news(
     if tickers_without_coverage:
         print(f"      ⚠ No ticker-specific news found for: {', '.join(tickers_without_coverage)}")
     return {
-        "news": news, "themes": themes, "candidate_tickers": candidate_tickers,
+        "news": news,
+        "themes": themes,
+        "candidate_tickers": candidate_tickers,
         "tickers_without_coverage": tickers_without_coverage,
         "retries": {**state["retries"], stage: 0},
     }
@@ -448,15 +482,14 @@ def _merge_partial_results(state: PipelineState, results: list[dict]) -> dict:
 
 
 async def node_data_news_parallel(state: PipelineState) -> dict:
-    """"specific" mode: DataCollector and NewsSentiment run concurrently.
+    """ "specific" mode: DataCollector and NewsSentiment run concurrently.
     Skips whichever sub-stage already has clean data from a previous pass
     (retries==0 and data present) — a validation retry of one sub-stage
     doesn't re-run the one that already succeeded."""
     stage_dc, stage_ns = "data_collector", "news_sentiment"
     need_dc = not state.get("fundamentals") or state["retries"].get(stage_dc, 0) > 0
     need_ns = (
-        not (state.get("news") or state.get("themes"))
-        or state["retries"].get(stage_ns, 0) > 0
+        not (state.get("news") or state.get("themes")) or state["retries"].get(stage_ns, 0) > 0
     )
 
     print(f"\n[1/4] DataCollector + NewsSentiment (parallel) ← {', '.join(state['tickers'])}")
@@ -466,7 +499,10 @@ async def node_data_news_parallel(state: PipelineState) -> dict:
     if need_ns:
         coros.append(
             _fetch_news(
-                state, focus=state.get("focus", ""), stage=stage_ns, tickers=state["tickers"],
+                state,
+                focus=state.get("focus", ""),
+                stage=stage_ns,
+                tickers=state["tickers"],
             ),
         )
 
@@ -475,7 +511,7 @@ async def node_data_news_parallel(state: PipelineState) -> dict:
 
 
 async def node_news_sentiment_discovery(state: PipelineState) -> dict:
-    """"discovery" mode, stage 1: no tickers known yet — NewsSentiment scans
+    """ "discovery" mode, stage 1: no tickers known yet — NewsSentiment scans
     the market and proposes candidate_tickers for DataCollector to fetch next."""
     print("\n[1/5] NewsSentiment (discovery) ← scanning for opportunities")
     return await _fetch_news(state, focus=state.get("focus", ""), stage="news_sentiment")
@@ -502,7 +538,8 @@ async def _try_sector_seed_fallback(state: PipelineState, exclude: list[str]) ->
     Returns None if no seed list matches the sector, or if the fallback
     search itself finds nothing — callers must not fabricate candidates in
     that case, just report the gap honestly."""
-    seed_tickers = [t for t in load_sector_seed_tickers(state["priority_sectors"]) if t not in exclude]
+    all_seed = load_sector_seed_tickers(state["priority_sectors"])
+    seed_tickers = [t for t in all_seed if t not in exclude]
     if not seed_tickers:
         return None
 
@@ -513,13 +550,17 @@ async def _try_sector_seed_fallback(state: PipelineState, exclude: list[str]) ->
         f"fallback: ricerca dedicata su ticker noti del settore ({seed_str})"
     )
     emit(
-        state.get("run_id"), "sector_fallback",
-        sectors=state["priority_sectors"], seed_tickers=seed_tickers,
+        state.get("run_id"),
+        "sector_fallback",
+        sectors=state["priority_sectors"],
+        seed_tickers=seed_tickers,
     )
     try:
         fallback_result = await _fetch_news(
-            state, focus=state.get("focus", ""),
-            stage="news_sentiment_sector_fallback", tickers=seed_tickers,
+            state,
+            focus=state.get("focus", ""),
+            stage="news_sentiment_sector_fallback",
+            tickers=seed_tickers,
         )
     except RuntimeError as e:
         print(f"      ⚠ Fallback settoriale non riuscito: {e}")
@@ -529,9 +570,13 @@ async def _try_sector_seed_fallback(state: PipelineState, exclude: list[str]) ->
         print("      ⚠ Fallback settoriale: risposta non valida, nessun dato utilizzabile.")
         return None
 
-    covered = [t for t in seed_tickers if t not in fallback_result.get("tickers_without_coverage", [])]
+    no_coverage = fallback_result.get("tickers_without_coverage", [])
+    covered = [t for t in seed_tickers if t not in no_coverage]
     if not covered:
-        print("      ⚠ Fallback settoriale: nessuna notizia trovata nemmeno sui ticker noti del settore.")
+        print(
+            "      ⚠ Fallback settoriale: nessuna notizia trovata "
+            "nemmeno sui ticker noti del settore."
+        )
         return None
 
     covered_str = ", ".join(covered)
@@ -549,7 +594,7 @@ async def _try_sector_seed_fallback(state: PipelineState, exclude: list[str]) ->
 
 
 async def node_data_collector_from_candidates(state: PipelineState) -> dict:
-    """"discovery" mode, stage 2: fetch fundamentals for the candidates
+    """ "discovery" mode, stage 2: fetch fundamentals for the candidates
     NewsSentiment proposed in stage 1 — after Gate 1's restricted-list check
     (pure ticker match, no fundamentals needed for this part of Gate 1).
     See _try_sector_seed_fallback's docstring for the sector-fallback path.
@@ -581,8 +626,10 @@ async def node_data_collector_from_candidates(state: PipelineState) -> dict:
                 f"{len(restricted_blocked)} candidate ticker(s) blocked"
             )
             emit(
-                state.get("run_id"), "gate1_block",
-                check="restricted_list", blocked=restricted_blocked,
+                state.get("run_id"),
+                "gate1_block",
+                check="restricted_list",
+                blocked=restricted_blocked,
             )
         if eligible_tickers and already_retried:
             print(
@@ -592,10 +639,15 @@ async def node_data_collector_from_candidates(state: PipelineState) -> dict:
         elif eligible_tickers:
             print(f"\n[2/5] DataCollector (from candidates) ← {', '.join(eligible_tickers)}")
             augmented_state = {
-                **state, "gate1_excluded": [*state.get("gate1_excluded", []), *restricted_blocked],
+                **state,
+                "gate1_excluded": [*state.get("gate1_excluded", []), *restricted_blocked],
             }
             try:
-                attempt = await _collect_fundamentals(augmented_state, eligible_tickers, "data_collector")
+                attempt = await _collect_fundamentals(
+                    augmented_state,
+                    eligible_tickers,
+                    "data_collector",
+                )
             except RuntimeError:
                 attempt = None
             if attempt is not None and "fundamentals" not in attempt:
@@ -613,14 +665,23 @@ async def node_data_collector_from_candidates(state: PipelineState) -> dict:
             if fb_tickers:
                 augmented_state = {
                     **state,
-                    "gate1_excluded": [*state.get("gate1_excluded", []), *restricted_blocked, *fb_restricted],
+                    "gate1_excluded": [
+                        *state.get("gate1_excluded", []),
+                        *restricted_blocked,
+                        *fb_restricted,
+                    ],
                 }
                 try:
-                    fb_collected = await _collect_fundamentals(augmented_state, fb_tickers, "data_collector")
+                    fb_collected = await _collect_fundamentals(
+                        augmented_state,
+                        fb_tickers,
+                        "data_collector",
+                    )
                 except RuntimeError:
                     fb_collected = None
                 if fb_collected is not None and "fundamentals" not in fb_collected:
-                    return fb_collected  # same invalid-batch handling as above, for the fallback tickers
+                    # Same invalid-batch handling as above, for the fallback tickers.
+                    return fb_collected
                 if fb_collected is not None:
                     result = {
                         **fb_collected,
@@ -752,7 +813,8 @@ async def node_compliance_agent(state: PipelineState) -> dict:
     verdict_by_ticker = {r["ticker"]: r for r in compliance_results}
 
     compliant_candidates = [
-        c for c in state["candidates"]
+        c
+        for c in state["candidates"]
         if verdict_by_ticker.get(c.get("ticker"), {}).get("compliant", True)
     ]
     compliant_tickers = {c.get("ticker") for c in compliant_candidates}
@@ -760,7 +822,8 @@ async def node_compliance_agent(state: PipelineState) -> dict:
 
     newly_flagged = [
         {"ticker": t, "motivo_esclusione": v.get("motivo", "Non conforme alle policy interne.")}
-        for t, v in verdict_by_ticker.items() if not v.get("compliant", True)
+        for t, v in verdict_by_ticker.items()
+        if not v.get("compliant", True)
     ]
     if newly_flagged:
         flagged_str = ", ".join(f["ticker"] for f in newly_flagged)
@@ -770,9 +833,7 @@ async def node_compliance_agent(state: PipelineState) -> dict:
         )
         emit(state.get("run_id"), "gate2_flag", flagged=newly_flagged)
 
-    print(
-        f"      → {len(compliant_candidates)}/{len(state['candidates'])} candidate(s) compliant"
-    )
+    print(f"      → {len(compliant_candidates)}/{len(state['candidates'])} candidate(s) compliant")
     return {
         "candidates": compliant_candidates,
         "risk_assessment": compliant_risk,
@@ -786,11 +847,13 @@ async def _fetch_returns(tickers: list[str], lookback_days: int) -> dict[str, li
     """Best-effort price-history fetch for Gate 3's correlation check — a
     yfinance hiccup degrades to a warning in check_portfolio_limits, it never
     blocks an otherwise valid allocation."""
+
     async def one(ticker: str) -> tuple[str, list[float]]:
         try:
             return ticker, await asyncio.to_thread(get_daily_returns, ticker, lookback_days)
         except Exception:
             return ticker, []
+
     pairs = await asyncio.gather(*(one(t) for t in tickers))
     return {t: r for t, r in pairs if r}
 
@@ -839,9 +902,9 @@ async def node_portfolio_manager(state: PipelineState) -> dict:
     if missing:
         missing_str = ", ".join(missing)
         return _record_invalid(
-            state, stage,
-            "- [allocation_coverage] Candidati senza peso né motivo di esclusione: "
-            f"{missing_str}.",
+            state,
+            stage,
+            f"- [allocation_coverage] Candidati senza peso né motivo di esclusione: {missing_str}.",
         )
 
     # Gate 3 — deterministic aggregate limits.
@@ -857,12 +920,13 @@ async def node_portfolio_manager(state: PipelineState) -> dict:
             f"      ⚠ Gate 3: {len(gate3_errors)} limite/i di portafoglio violato/i — "
             "re-allocazione richiesta"
         )
-        emit(state.get("run_id"), "gate3_violation",
-             violations=[v.as_dict() for v in gate3_errors])
+        emit(state.get("run_id"), "gate3_violation", violations=[v.as_dict() for v in gate3_errors])
         return _record_invalid(state, stage, _feedback_text(gate3_errors))
 
-    print(f"      → Allocation approved by Gate 3: {len(allocation)} position(s), "
-          f"{100 - sum(float(e['peso_pct']) for e in allocation):.1f}% cash")
+    print(
+        f"      → Allocation approved by Gate 3: {len(allocation)} position(s), "
+        f"{100 - sum(float(e['peso_pct']) for e in allocation):.1f}% cash"
+    )
     return {
         "allocation": allocation,
         "allocation_esclusi": allocation_esclusi,
@@ -925,7 +989,8 @@ async def node_report_writer(state: PipelineState) -> dict:
         existing = report.get("nota_metodologica", "")
         report["nota_metodologica"] = (
             f"{existing} {state['sector_fallback_note']}".strip()
-            if existing else state["sector_fallback_note"]
+            if existing
+            else state["sector_fallback_note"]
         )
 
     try:
@@ -950,6 +1015,7 @@ async def node_report_writer(state: PipelineState) -> dict:
 # Graph definition                                                     #
 # ------------------------------------------------------------------ #
 
+
 def _make_router(stage: str, next_node: str, loop_node: str | None = None):
     """Loop back to `loop_node` (defaults to `stage` — true whenever the
     graph node's name matches its retry-tracking stage name, as for
@@ -972,6 +1038,7 @@ def _make_router(stage: str, next_node: str, loop_node: str | None = None):
                 f"{state['validation_feedback'].get(stage, '')}"
             )
         return loop_node
+
     return router
 
 
@@ -980,6 +1047,7 @@ def _make_dual_router(stage_a: str, stage_b: str, next_node: str, loop_node: str
     where two independent sub-stages share one graph node: only advances
     once *both* stages have a clean (retries==0) attempt; hard-fails if
     either exceeds MAX_VALIDATION_RETRIES."""
+
     def router(state: PipelineState) -> str:
         for stage in (stage_a, stage_b):
             retries = state["retries"].get(stage, 0)
@@ -991,6 +1059,7 @@ def _make_dual_router(stage_a: str, stage_b: str, next_node: str, loop_node: str
         if state["retries"].get(stage_a, 0) == 0 and state["retries"].get(stage_b, 0) == 0:
             return next_node
         return loop_node
+
     return router
 
 
@@ -1000,6 +1069,7 @@ def _with_persistence(node_fn, stage: str):
     a crash between stages can then be resumed instead of restarting the
     whole pipeline. Best-effort (see shared/db.py::save_run_state): a save
     failure never breaks the pipeline itself."""
+
     async def wrapped(state: PipelineState) -> dict:
         emit(state.get("run_id"), "stage_start", stage=stage)
         t0 = time.perf_counter()
@@ -1008,10 +1078,15 @@ def _with_persistence(node_fn, stage: str):
         await save_run_state(state["run_id"], state["tickers"], "running", stage, merged)
         # A retry pass through the same node still emits stage_end — the UI
         # distinguishes it because a stage_retry event precedes it.
-        emit(state.get("run_id"), "stage_end", stage=stage,
-             duration_s=round(time.perf_counter() - t0, 1),
-             clean=all(v == 0 for v in merged.get("retries", {}).values()))
+        emit(
+            state.get("run_id"),
+            "stage_end",
+            stage=stage,
+            duration_s=round(time.perf_counter() - t0, 1),
+            clean=all(v == 0 for v in merged.get("retries", {}).values()),
+        )
         return result
+
     return wrapped
 
 
@@ -1052,7 +1127,8 @@ def _build_graph() -> StateGraph:
     builder.add_node(
         "data_collector_from_candidates",
         _with_persistence(
-            node_data_collector_from_candidates, "data_collector_from_candidates",
+            node_data_collector_from_candidates,
+            "data_collector_from_candidates",
         ),
     )
     builder.add_node(
@@ -1060,50 +1136,63 @@ def _build_graph() -> StateGraph:
         _with_persistence(node_fundamental_analyst, "fundamental_analyst"),
     )
     builder.add_node(
-        "risk_assessor", _with_persistence(node_risk_assessor, "risk_assessor"),
+        "risk_assessor",
+        _with_persistence(node_risk_assessor, "risk_assessor"),
     )
     builder.add_node(
-        "compliance_agent", _with_persistence(node_compliance_agent, "compliance_agent"),
+        "compliance_agent",
+        _with_persistence(node_compliance_agent, "compliance_agent"),
     )
     builder.add_node(
-        "portfolio_manager", _with_persistence(node_portfolio_manager, "portfolio_manager"),
+        "portfolio_manager",
+        _with_persistence(node_portfolio_manager, "portfolio_manager"),
     )
     builder.add_node(
-        "report_writer", _with_persistence(node_report_writer, "report_writer"),
+        "report_writer",
+        _with_persistence(node_report_writer, "report_writer"),
     )
 
     builder.set_conditional_entry_point(_entry_router)
     builder.add_conditional_edges(
         "data_news_parallel",
         _make_dual_router(
-            "data_collector", "news_sentiment", "fundamental_analyst", "data_news_parallel",
+            "data_collector",
+            "news_sentiment",
+            "fundamental_analyst",
+            "data_news_parallel",
         ),
     )
     builder.add_conditional_edges(
         "news_sentiment_discovery",
         _make_router(
-            "news_sentiment", "data_collector_from_candidates",
+            "news_sentiment",
+            "data_collector_from_candidates",
             loop_node="news_sentiment_discovery",
         ),
     )
     builder.add_conditional_edges(
         "data_collector_from_candidates",
         _make_router(
-            "data_collector", "fundamental_analyst",
+            "data_collector",
+            "fundamental_analyst",
             loop_node="data_collector_from_candidates",
         ),
     )
     builder.add_conditional_edges(
-        "fundamental_analyst", _make_router("fundamental_analyst", "risk_assessor"),
+        "fundamental_analyst",
+        _make_router("fundamental_analyst", "risk_assessor"),
     )
     builder.add_conditional_edges(
-        "risk_assessor", _make_router("risk_assessor", "compliance_agent"),
+        "risk_assessor",
+        _make_router("risk_assessor", "compliance_agent"),
     )
     builder.add_conditional_edges(
-        "compliance_agent", _make_router("compliance_agent", "portfolio_manager"),
+        "compliance_agent",
+        _make_router("compliance_agent", "portfolio_manager"),
     )
     builder.add_conditional_edges(
-        "portfolio_manager", _make_router("portfolio_manager", "report_writer"),
+        "portfolio_manager",
+        _make_router("portfolio_manager", "report_writer"),
     )
     builder.add_conditional_edges("report_writer", _make_router("report_writer", END))
 
@@ -1116,6 +1205,7 @@ _graph = _build_graph()
 # ------------------------------------------------------------------ #
 # Pipeline entry point                                                 #
 # ------------------------------------------------------------------ #
+
 
 async def run_pipeline(
     mode: str,
@@ -1150,10 +1240,7 @@ async def run_pipeline(
             # needed yet, so it runs once here instead of inside a graph node.
             tickers, gate1_excluded = check_restricted_list(tickers)
             if gate1_excluded:
-                print(
-                    f"      ⚠ Gate 1 (restricted list): "
-                    f"{len(gate1_excluded)} ticker(s) blocked"
-                )
+                print(f"      ⚠ Gate 1 (restricted list): {len(gate1_excluded)} ticker(s) blocked")
             if not tickers:
                 raise RuntimeError(
                     "All requested tickers were blocked by Gate 1 (restricted list)."
@@ -1192,8 +1279,10 @@ async def run_pipeline(
     if initial_state.get("gate1_excluded"):
         # The "specific"-mode restricted-list check ran before run_id existed.
         emit(
-            run_id, "gate1_block",
-            check="restricted_list", blocked=initial_state["gate1_excluded"],
+            run_id,
+            "gate1_block",
+            check="restricted_list",
+            blocked=initial_state["gate1_excluded"],
         )
 
     t0 = time.time()
@@ -1213,9 +1302,10 @@ async def run_pipeline(
 
     # Tickers actually analyzed — for "discovery" mode this is the candidates
     # NewsSentiment proposed, not the (empty) user-supplied `tickers`.
-    analyzed_tickers = sorted({
-        f.get("ticker") for f in final_state.get("fundamentals", []) if f.get("ticker")
-    }) or tickers
+    analyzed_tickers = (
+        sorted({f.get("ticker") for f in final_state.get("fundamentals", []) if f.get("ticker")})
+        or tickers
+    )
 
     report_path, violations = generate_html(
         executive_summary=final_state["executive_summary"],
@@ -1235,12 +1325,15 @@ async def run_pipeline(
     if open_browser:
         webbrowser.open(report_path.as_uri())
 
-    emit(run_id, "run_complete",
-         report_path=str(report_path),
-         executive_summary=final_state["executive_summary"],
-         qa_verdict=final_state["qa_verdict"],
-         execution_seconds=execution_seconds,
-         analyzed_tickers=analyzed_tickers)
+    emit(
+        run_id,
+        "run_complete",
+        report_path=str(report_path),
+        executive_summary=final_state["executive_summary"],
+        qa_verdict=final_state["qa_verdict"],
+        execution_seconds=execution_seconds,
+        analyzed_tickers=analyzed_tickers,
+    )
     end_stream(run_id)
 
     return {
@@ -1257,6 +1350,7 @@ async def run_pipeline(
 # ------------------------------------------------------------------ #
 # Entry point                                                          #
 # ------------------------------------------------------------------ #
+
 
 def _print_result(result: dict) -> None:
     print("\n=== SINTESI ESECUTIVA ===")
@@ -1296,8 +1390,10 @@ def _summarize_result_for_turn(result: dict) -> str:
 
 
 async def _interactive_loop(
-    session_arg: str | None, new_session: bool,
-    default_priority_sectors: list[str], default_excluded_sectors: list[str],
+    session_arg: str | None,
+    new_session: bool,
+    default_priority_sectors: list[str],
+    default_excluded_sectors: list[str],
 ) -> None:
     """Multi-turn REPL: reads free-text requests, has the coordinator
     interpret each one (with the session's conversation history as context),
@@ -1309,12 +1405,12 @@ async def _interactive_loop(
     if session_id:
         print(f"Sessione: {session_id} (memoria cross-sessione attiva)")
     else:
-        print(
-            "DATABASE_URL non configurato — nessuna memoria tra sessioni per questa esecuzione."
-        )
+        print("DATABASE_URL non configurato — nessuna memoria tra sessioni per questa esecuzione.")
 
-    print('Scrivi una richiesta in linguaggio naturale (es. "confrontami NVDA e AMD", '
-          '"opportunità nel settore bancario europeo ora"). "exit" o Ctrl-D per uscire.\n')
+    print(
+        'Scrivi una richiesta in linguaggio naturale (es. "confrontami NVDA e AMD", '
+        '"opportunità nel settore bancario europeo ora"). "exit" o Ctrl-D per uscire.\n'
+    )
 
     while True:
         try:
@@ -1333,7 +1429,9 @@ async def _interactive_loop(
 
         try:
             intent: CoordinatorIntent = await interpret_prompt(
-                _coordinator_client, user_input, history,
+                _coordinator_client,
+                user_input,
+                history,
             )
         except Exception as e:
             print(f"⚠ Non sono riuscito a interpretare la richiesta: {e}")
@@ -1360,7 +1458,9 @@ async def _interactive_loop(
         _print_result(result)
         if session_id:
             await append_turn(
-                session_id, "assistant", _summarize_result_for_turn(result),
+                session_id,
+                "assistant",
+                _summarize_result_for_turn(result),
                 run_id=result.get("run_id"),
             )
         print()
@@ -1375,23 +1475,29 @@ if __name__ == "__main__":
         nargs="+",
         default=None,
         help="Non-interactive shortcut: analyze exactly these tickers and exit "
-             "(bypasses the natural-language coordinator).",
+        "(bypasses the natural-language coordinator).",
     )
     parser.add_argument(
-        "--output", default=None,
+        "--output",
+        default=None,
         help="Save JSON report to file (only with --tickers/--resume)",
     )
     parser.add_argument(
-        "--resume", default=None, metavar="RUN_ID",
+        "--resume",
+        default=None,
+        metavar="RUN_ID",
         help="Resume a previously interrupted run from its last completed stage "
-             "(requires DATABASE_URL — see shared/db.py::pipeline_runs).",
+        "(requires DATABASE_URL — see shared/db.py::pipeline_runs).",
     )
     parser.add_argument(
-        "--session", default=None, metavar="SESSION_ID",
+        "--session",
+        default=None,
+        metavar="SESSION_ID",
         help="Resume a specific conversation session",
     )
     parser.add_argument(
-        "--new-session", action="store_true",
+        "--new-session",
+        action="store_true",
         help="Start a new conversation session instead of continuing the last one",
     )
     args = parser.parse_args()
@@ -1408,11 +1514,15 @@ if __name__ == "__main__":
     if args.tickers or args.resume:
         # Non-interactive, single-shot: scripted use, or resuming a specific run.
         tickers = args.tickers or config_data.get("tickers", ["AAPL", "MSFT", "UCG.MI"])
-        result = asyncio.run(run_pipeline(
-            mode="specific", tickers=tickers,
-            priority_sectors=default_priority_sectors, excluded_sectors=default_excluded_sectors,
-            resume_run_id=args.resume,
-        ))
+        result = asyncio.run(
+            run_pipeline(
+                mode="specific",
+                tickers=tickers,
+                priority_sectors=default_priority_sectors,
+                excluded_sectors=default_excluded_sectors,
+                resume_run_id=args.resume,
+            )
+        )
         _print_result(result)
         if args.output:
             Path(args.output).write_text(
@@ -1420,6 +1530,11 @@ if __name__ == "__main__":
             )
             print(f"\nReport salvato in: {args.output}")
     else:
-        asyncio.run(_interactive_loop(
-            args.session, args.new_session, default_priority_sectors, default_excluded_sectors,
-        ))
+        asyncio.run(
+            _interactive_loop(
+                args.session,
+                args.new_session,
+                default_priority_sectors,
+                default_excluded_sectors,
+            )
+        )
