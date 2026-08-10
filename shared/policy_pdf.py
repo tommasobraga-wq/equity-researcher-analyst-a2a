@@ -15,6 +15,7 @@ introduces spurious spaces inside words on some of these PDFs (e.g.
 embedding quality. PyMuPDF does not have this problem on any of the four
 documents this module was built against.
 """
+
 import re
 from pathlib import Path
 from typing import Any
@@ -33,7 +34,10 @@ def _load_text(path: Path) -> str:
 
 
 def _chunk_by_article(
-    text: str, marker_pattern: str, doc_type: str, source: str,
+    text: str,
+    marker_pattern: str,
+    doc_type: str,
+    source: str,
 ) -> list[dict[str, Any]]:
     """Splits on an "Article N" / "Art. N" marker, one chunk per article.
 
@@ -68,11 +72,13 @@ def _chunk_by_article(
         content = re.sub(r"\n{2,}", "\n", text[start:end]).strip()
         if len(content) < _MIN_CHUNK_CHARS:
             continue
-        chunks.append({
-            "content": content,
-            "source": source,
-            "metadata": {"doc_type": doc_type, "article": matches[i].group(1)},
-        })
+        chunks.append(
+            {
+                "content": content,
+                "source": source,
+                "metadata": {"doc_type": doc_type, "article": matches[i].group(1)},
+            }
+        )
     return chunks
 
 
@@ -93,8 +99,12 @@ def _chunk_consob(path: Path) -> list[dict[str, Any]]:
 
 
 def _chunk_by_topic_headers(
-    path: Path, doc_type: str, header_font: str, header_size_range: tuple[float, float],
-    start_marker: str | None = None, end_marker: str | None = None,
+    path: Path,
+    doc_type: str,
+    header_font: str,
+    header_size_range: tuple[float, float],
+    start_marker: str | None = None,
+    end_marker: str | None = None,
 ) -> list[dict[str, Any]]:
     """Splits on topic-header lines identified by font (bold spans at body
     text size), grouping the numbered paragraphs under each header into one
@@ -150,11 +160,13 @@ def _chunk_by_topic_headers(
         if current_header and current_lines:
             content = re.sub(r"\n{2,}", "\n", "\n".join(current_lines)).strip()
             if len(content) >= _MIN_CHUNK_CHARS:
-                chunks.append({
-                    "content": f"{current_header}\n{content}",
-                    "source": path.name,
-                    "metadata": {"doc_type": doc_type, "topic": current_header},
-                })
+                chunks.append(
+                    {
+                        "content": f"{current_header}\n{content}",
+                        "source": path.name,
+                        "metadata": {"doc_type": doc_type, "topic": current_header},
+                    }
+                )
 
     # Consecutive header lines (headers wrapping across two lines, as seen in
     # this document) are merged into a single header before the first
@@ -177,8 +189,12 @@ def _chunk_by_topic_headers(
 
 def _chunk_product_governance(path: Path) -> list[dict[str, Any]]:
     return _chunk_by_topic_headers(
-        path, doc_type="ESMA_PG", header_font="Arial-BoldMT", header_size_range=(10.0, 11.5),
-        start_marker="5.1 General", end_marker=None,
+        path,
+        doc_type="ESMA_PG",
+        header_font="Arial-BoldMT",
+        header_size_range=(10.0, 11.5),
+        start_marker="5.1 General",
+        end_marker=None,
     )
 
 
@@ -208,19 +224,21 @@ def _chunk_suitability(path: Path) -> list[dict[str, Any]]:
         content = re.sub(r"\n{2,}", "\n", annex[seg_start:seg_end]).strip()
         if len(content) < _MIN_CHUNK_CHARS:
             continue
-        chunks.append({
-            "content": content,
-            "source": path.name,
-            "metadata": {"doc_type": "ESMA_SUIT", "guideline_number": m.group(1)},
-        })
+        chunks.append(
+            {
+                "content": content,
+                "source": path.name,
+                "metadata": {"doc_type": "ESMA_SUIT", "guideline_number": m.group(1)},
+            }
+        )
     return chunks
 
 
 _PARSERS = {
-    "CELEX_32019R2088_EN_TXT.pdf": _chunk_sfdr,
-    "reg_consob_2018_20307.pdf": _chunk_consob,
-    "ESMA35-43-3448_Guidelines_on_product_governance.pdf": _chunk_product_governance,
-    "esma35-43-3172_final_report_on_mifid_ii_guidelines_on_suitability.pdf": _chunk_suitability,
+    "sfdr_reg_2019-2088_sustainability_disclosure.pdf": _chunk_sfdr,
+    "consob_reg_20307-2018_intermediary_conduct.pdf": _chunk_consob,
+    "esma_35-43-3448_mifid2_product_governance.pdf": _chunk_product_governance,
+    "esma_35-43-3172_mifid2_suitability.pdf": _chunk_suitability,
 }
 
 

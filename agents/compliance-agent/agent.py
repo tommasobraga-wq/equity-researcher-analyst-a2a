@@ -6,6 +6,7 @@ requisiti di disclosure) recuperate via RAG (shared/policy_store.py — Voyage A
 embeddings + pgvector). Gira dopo risk_assessor e prima di report_writer:
 i candidati marcati non compliant non arrivano al report finale.
 """
+
 import json
 import os
 import sys
@@ -63,8 +64,8 @@ limiti di concentrazione (coperti da gate deterministici separati). Non pretende
 questi ultimi.
 
 Controlla il JSON array fornito (racchiuso nei tag <subject_to_review>):
-1. I "policy_refs" citano nomi di documento del corpus plausibili (es. CELEX_32019R2088 / SFDR,
-   ESMA product governance o suitability, reg_consob_2018_20307), non inventati.
+1. I "policy_refs" citano nomi di documento del corpus plausibili (es. sfdr_reg_2019-2088 / SFDR,
+   esma_35-43-3448 product governance o esma_35-43-3172 suitability, consob_reg_20307-2018), non inventati.
 2. compliant=true SENZA policy_refs è legittimo (policy silenti sul punto) — non respingerlo per questo.
 
 (Verdetti mancanti/duplicati e motivo/policy_refs vuoti su compliant=false sono già verificati
@@ -82,16 +83,22 @@ def _make_search_policy_tool(correlation_id: str) -> ToolSpec:
         try:
             results = await search_policy(query)
             await log_event(
-                correlation_id, "external_fetch", "compliance_agent",
-                payload={"source": "policy_rag", "query": query, "hits": len(results)}, status="completed",
+                correlation_id,
+                "external_fetch",
+                "compliance_agent",
+                payload={"source": "policy_rag", "query": query, "hits": len(results)},
+                status="completed",
             )
             if not results:
                 return "NO_RESULTS"
             return json.dumps(results, ensure_ascii=False)
         except Exception as e:
             await log_event(
-                correlation_id, "external_fetch", "compliance_agent",
-                payload={"source": "policy_rag", "query": query, "error": str(e)}, status="error",
+                correlation_id,
+                "external_fetch",
+                "compliance_agent",
+                payload={"source": "policy_rag", "query": query, "error": str(e)},
+                status="error",
             )
             return f"ERROR: {e}"
 
@@ -165,7 +172,8 @@ _OUTPUT_SCHEMA = {
                     "ticker": {"type": "string"},
                     "compliant": {"type": "boolean"},
                     "policy_refs": {
-                        "type": "array", "items": {"type": "string"},
+                        "type": "array",
+                        "items": {"type": "string"},
                         "description": "Source document names (e.g. esg_exclusions.md) backing this verdict.",
                     },
                     "motivo": {"type": "string"},
@@ -223,7 +231,10 @@ async def run_agent(task: A2ATask) -> A2ATaskResult:
             return A2ATaskResult.invalid(task.id, " ".join(det_errors))
 
         approved, qa_text = run_llm_qa(
-            _qa_client, _QA_SYSTEM, json.dumps(compliance_results, ensure_ascii=False), model=_QA_MODEL,
+            _qa_client,
+            _QA_SYSTEM,
+            json.dumps(compliance_results, ensure_ascii=False),
+            model=_QA_MODEL,
         )
         if not approved:
             return A2ATaskResult.invalid(task.id, qa_text)
