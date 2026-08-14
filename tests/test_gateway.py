@@ -1,4 +1,5 @@
 """Gateway API tests — pipeline and coordinator monkeypatched, no agents needed."""
+
 import json
 
 import httpx
@@ -15,6 +16,7 @@ class _FakeIntent:
     focus = ""
     priority_sectors = []
     excluded_sectors = []
+    countries = []
 
 
 @pytest.fixture
@@ -35,12 +37,24 @@ def patched(monkeypatch, tmp_path):
         run_id = kwargs["run_id"]
         events.emit(run_id, "stage_start", stage="data_news_parallel")
         events.emit(run_id, "stage_end", stage="data_news_parallel", duration_s=1.0, clean=True)
-        events.emit(run_id, "run_complete", report_path=str(report_file),
-                    executive_summary="Sintesi.", qa_verdict="QA: APPROVATO",
-                    execution_seconds=1, analyzed_tickers=["AAPL"])
+        events.emit(
+            run_id,
+            "run_complete",
+            report_path=str(report_file),
+            executive_summary="Sintesi.",
+            qa_verdict="QA: APPROVATO",
+            execution_seconds=1,
+            analyzed_tickers=["AAPL"],
+        )
         events.end_stream(run_id)
-        return {"status": "completed", "run_id": run_id, "executive_summary": "Sintesi.",
-                "qa_verdict": "QA: APPROVATO", "report": {}, "report_path": str(report_file)}
+        return {
+            "status": "completed",
+            "run_id": run_id,
+            "executive_summary": "Sintesi.",
+            "qa_verdict": "QA: APPROVATO",
+            "report": {},
+            "report_path": str(report_file),
+        }
 
     monkeypatch.setattr(gw, "interpret_prompt", fake_interpret)
     monkeypatch.setattr(gw, "run_pipeline", fake_pipeline)
@@ -79,8 +93,7 @@ async def test_stream_replays_status_when_run_already_finished(client, patched):
         stream = await client.get("/api/stream/" + run_id)
         assert stream.status_code == 200
         payloads = [
-            json.loads(line[6:])
-            for line in stream.text.splitlines() if line.startswith("data: ")
+            json.loads(line[6:]) for line in stream.text.splitlines() if line.startswith("data: ")
         ]
         assert payloads and payloads[0]["type"] == "run_completed"
 
