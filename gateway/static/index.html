@@ -32,6 +32,10 @@
   #agents-dot .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--ink-soft); margin-right: 6px; }
   #agents-dot.ok .dot { background: var(--ok); }
   #agents-dot.bad .dot { background: var(--err); }
+  #clear-btn { padding: 6px 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); color: var(--ink-soft); font-size: 12.5px; font-weight: 600; cursor: pointer; }
+  #clear-btn:hover { color: var(--err); border-color: var(--err); }
+  #clear-btn:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+  #clear-btn:disabled { opacity: 0.5; cursor: default; }
 
   .chat { display: flex; flex-direction: column; border-right: 1px solid var(--line); min-height: 0; }
   #messages { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 14px; }
@@ -54,6 +58,7 @@
   .trace-head h2 { margin: 0 0 6px; font-size: 13px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-soft); font-weight: 650; }
   #intent { font-family: var(--mono); font-size: 12.5px; color: var(--ink-soft); min-height: 18px; }
   #intent .chip { display: inline-block; background: var(--accent-soft); color: var(--accent); border-radius: 5px; padding: 1px 7px; margin-right: 6px; }
+  #intent .focus-caveat:not(:empty) { color: var(--gate); font-size: 0.8rem; margin-top: 4px; }
   #timeline { flex: 1; overflow-y: auto; padding: 16px 20px; }
   .ev { display: flex; gap: 10px; padding: 7px 0; border-bottom: 1px dashed var(--line); font-size: 13.5px; }
   .ev time { font-family: var(--mono); font-size: 11.5px; color: var(--ink-soft); white-space: nowrap; padding-top: 2px; }
@@ -79,6 +84,7 @@
     <h1>Equity Researcher A2A</h1>
     <span class="sub">chat con l'orchestratore · trace live della pipeline</span>
     <span id="agents-dot" title="Stato agenti"><span class="dot"></span><span id="agents-label">verifica agenti…</span></span>
+    <button type="button" id="clear-btn" title="Cancella la conversazione e la memoria, riparti da zero">Nuova conversazione</button>
   </header>
 
   <section class="chat" aria-label="Chat">
@@ -120,6 +126,7 @@ const form = document.getElementById("chat-form");
 const input = document.getElementById("chat-input");
 const sendBtn = document.getElementById("send-btn");
 const reportFrame = document.getElementById("report-frame");
+const clearBtn = document.getElementById("clear-btn");
 
 let sessionId = localStorage.getItem("era2a_session") || null;
 let currentRun = null;
@@ -187,6 +194,19 @@ function handleEvent(ev) {
         '<span class="badge warn">' + ev.blocked.length + " esclusi</span>" +
         listOf(ev.blocked, b => "<strong>" + esc(b.ticker) + "</strong> — " + esc(b.motivo_esclusione)), "gate");
       break;
+    case "thesis_rejected": {
+      addEvent(ev.ts,
+        '<span class="stage">FundamentalAnalyst · fuori tesi</span>' +
+        '<span class="badge warn">' + ev.rejected.length + " non selezionati</span>" +
+        listOf(ev.rejected, r => "<strong>" + esc(r.ticker) + "</strong> — " + esc(r.motivo_esclusione)), "gate");
+      const note = document.getElementById("focus-caveat");
+      if (note) {
+        note.textContent = "⚠ " + ev.rejected.length + " dei titoli richiesti non hanno una tesi " +
+          "coerente con il focus indicato (dettagli sopra) — il testo del focus riflette la " +
+          "richiesta originale, non l'esito dell'analisi.";
+      }
+      break;
+    }
     case "gate2_flag":
       addEvent(ev.ts,
         '<span class="stage">Gate 2 · compliance</span>' +
@@ -274,7 +294,11 @@ form.addEventListener("submit", async (e) => {
   intentBox.innerHTML =
     '<span class="chip">mode: ' + esc(it.mode) + "</span>" +
     (it.tickers.length ? '<span class="chip">' + esc(it.tickers.join(" ")) + "</span>" : "") +
-    (it.focus ? '<span class="chip">focus: ' + esc(it.focus) + "</span>" : "");
+    (it.focus ? '<span class="chip">focus: ' + esc(it.focus) + "</span>" : "") +
+    // Filled in later by the "thesis_rejected" SSE event, if FundamentalAnalyst
+    // drops any user-named ticker — the focus chip above echoes the *request*,
+    // not the outcome, so it can go stale the moment analysis narrows the set.
+    (it.focus ? '<div class="focus-caveat" id="focus-caveat"></div>' : "");
   addEvent(null, '<span class="stage">Coordinator</span><span class="badge ok">intent interpretato</span>' +
     '<div class="detail">mode=' + esc(it.mode) + (it.tickers.length ? " · tickers=" + esc(it.tickers.join(", ")) : "") +
     (it.focus ? " · focus=" + esc(it.focus) : "") + "</div>");
@@ -283,6 +307,28 @@ form.addEventListener("submit", async (e) => {
   source = new EventSource("/api/stream/" + currentRun);
   source.onmessage = (msg) => handleEvent(JSON.parse(msg.data));
   source.onerror = () => { /* la chiusura a fine run è attesa */ source.close(); };
+});
+
+clearBtn.addEventListener("click", async () => {
+  clearBtn.disabled = true;
+  try {
+    if (source) { source.close(); source = null; }
+    if (sessionId) {
+      await fetch("/api/session/" + sessionId, { method: "DELETE" }).catch(() => {});
+    }
+    localStorage.removeItem("era2a_session");
+    sessionId = null;
+    currentRun = null;
+    messages.innerHTML = '<div class="msg bot">Scrivi una richiesta in linguaggio naturale — ad esempio <em>«confrontami NVDA e AMD»</em> oppure <em>«opportunità nel settore bancario europeo ora»</em>. A destra vedrai ogni passo interno della pipeline mentre lavora.</div>';
+    timeline.innerHTML = '<div class="empty">Nessuna run attiva. La timeline si popola appena invii una richiesta.</div>';
+    intentBox.innerHTML = "";
+    reportFrame.style.display = "none";
+    reportFrame.src = "";
+    setBusy(false);
+    input.focus();
+  } finally {
+    clearBtn.disabled = false;
+  }
 });
 
 async function pollAgents() {

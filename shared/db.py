@@ -3,6 +3,7 @@
 One pool per process: the orchestrator and each of the 5 agents run as
 separate processes and each lazily creates its own pool on first use.
 """
+
 import json
 import os
 from typing import Any
@@ -152,7 +153,11 @@ async def get_vector_pool() -> asyncpg.Pool:
 
 
 async def save_run_state(
-    run_id: str, tickers: list[str], status: str, last_stage: str, state: dict[str, Any],
+    run_id: str,
+    tickers: list[str],
+    status: str,
+    last_stage: str,
+    state: dict[str, Any],
 ) -> None:
     """Upserts a snapshot of the pipeline's LangGraph state, so a crash
     mid-run can be resumed from the last completed stage instead of
@@ -174,7 +179,10 @@ async def save_run_state(
                     state = EXCLUDED.state,
                     updated_at = now()
                 """,
-                run_id, tickers, status, last_stage,
+                run_id,
+                tickers,
+                status,
+                last_stage,
                 json.dumps(state, ensure_ascii=False, default=str),
             )
     except Exception as e:
@@ -185,7 +193,9 @@ async def save_run_state(
 
 
 async def mark_run_failed(
-    run_id: str, tickers: list[str], fallback_state: dict[str, Any],
+    run_id: str,
+    tickers: list[str],
+    fallback_state: dict[str, Any],
 ) -> None:
     """Flags a run as failed without clobbering its persisted `state` with
     `fallback_state` if a snapshot already exists.
@@ -213,7 +223,8 @@ async def mark_run_failed(
                     status = 'failed',
                     updated_at = now()
                 """,
-                run_id, tickers,
+                run_id,
+                tickers,
                 json.dumps(fallback_state, ensure_ascii=False, default=str),
             )
     except Exception as e:
@@ -233,7 +244,8 @@ async def load_run_state(run_id: str) -> dict[str, Any] | None:
             return None
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT state FROM pipeline_runs WHERE run_id = $1", run_id,
+                "SELECT state FROM pipeline_runs WHERE run_id = $1",
+                run_id,
             )
         return json.loads(row["state"]) if row else None
     except Exception as e:
@@ -287,7 +299,8 @@ async def get_or_create_session(session_id: str | None = None) -> str | None:
             return str(row["session_id"])
     except Exception as e:
         _logger.warning(
-            f"Session resolution failed: {e}", extra={"event_type": "conversation_session"},
+            f"Session resolution failed: {e}",
+            extra={"event_type": "conversation_session"},
         )
         return None
 
@@ -302,7 +315,10 @@ async def append_turn(session_id: str, role: str, content: str, run_id: str | No
             await conn.execute(
                 "INSERT INTO conversation_turns (session_id, role, content, run_id) "
                 "VALUES ($1, $2, $3, $4)",
-                session_id, role, content, run_id,
+                session_id,
+                role,
+                content,
+                run_id,
             )
     except Exception as e:
         _logger.warning(
@@ -324,7 +340,8 @@ async def load_recent_turns(session_id: str, limit: int = 10) -> list[dict[str, 
                 SELECT role, content FROM conversation_turns
                 WHERE session_id = $1 ORDER BY created_at DESC LIMIT $2
                 """,
-                session_id, limit,
+                session_id,
+                limit,
             )
         return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
     except Exception as e:
@@ -333,6 +350,30 @@ async def load_recent_turns(session_id: str, limit: int = 10) -> list[dict[str, 
             extra={"correlation_id": session_id, "event_type": "conversation_turn"},
         )
         return []
+
+
+async def delete_session(session_id: str) -> None:
+    """Wipes a conversation session and all its turns. Best-effort: never raises
+    (mirrors append_turn/load_recent_turns — the gateway's "clear conversation"
+    action should degrade to a client-side-only reset if the DB is unavailable)."""
+    try:
+        pool = await get_pool()
+        if pool is None:
+            return
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "DELETE FROM conversation_turns WHERE session_id = $1",
+                session_id,
+            )
+            await conn.execute(
+                "DELETE FROM conversation_sessions WHERE session_id = $1",
+                session_id,
+            )
+    except Exception as e:
+        _logger.warning(
+            f"Session delete failed: {e}",
+            extra={"correlation_id": session_id, "event_type": "conversation_session"},
+        )
 
 
 async def check_connection() -> str:

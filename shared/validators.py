@@ -1,4 +1,5 @@
 """Deterministic constraint validators — zero LLM cost."""
+
 from __future__ import annotations
 
 import re
@@ -19,22 +20,42 @@ from shared.schemas import (
 @dataclass
 class Violation:
     rule: str
-    severity: str   # "error" | "warning"
+    severity: str  # "error" | "warning"
     ticker: str | None
     message: str
 
     def as_dict(self) -> dict:
         return {
-            "rule": self.rule, "severity": self.severity,
-            "ticker": self.ticker, "message": self.message,
+            "rule": self.rule,
+            "severity": self.severity,
+            "ticker": self.ticker,
+            "message": self.message,
         }
 
 
 _CRYPTO_KEYWORDS = {
-    "btc", "bitcoin", "eth", "ethereum", "crypto", "cryptocurrency",
-    "defi", "nft", "blockchain", "web3", "token", "altcoin",
-    "binance", "solana", "cardano", "ripple", "xrp", "dogecoin",
-    "stablecoin", "litecoin", "polkadot", "avalanche",
+    "btc",
+    "bitcoin",
+    "eth",
+    "ethereum",
+    "crypto",
+    "cryptocurrency",
+    "defi",
+    "nft",
+    "blockchain",
+    "web3",
+    "token",
+    "altcoin",
+    "binance",
+    "solana",
+    "cardano",
+    "ripple",
+    "xrp",
+    "dogecoin",
+    "stablecoin",
+    "litecoin",
+    "polkadot",
+    "avalanche",
 }
 
 _CRYPTO_RE = re.compile(
@@ -69,8 +90,11 @@ _INJECTION_RE = re.compile(
 )
 
 _SCORING_DIMS = [
-    "forza_catalizzatore", "fit_orizzonte", "asimmetria_narrativa",
-    "qualita_evidenze", "rischio_crowding",
+    "forza_catalizzatore",
+    "fit_orizzonte",
+    "asimmetria_narrativa",
+    "qualita_evidenze",
+    "rischio_crowding",
 ]
 
 _VALID_GIUDIZI = {"strong buy", "buy", "hold", "sell", "strong sell", "n/a"}
@@ -125,12 +149,19 @@ def _check_scoring_arithmetic(scoring) -> tuple[bool, int]:
 # zero LLM cost and never rely on a model to re-derive a fixed rule.  #
 # ------------------------------------------------------------------ #
 
+
 def check_candidates_deterministic(candidates: list[dict]) -> list[str]:
     """Perimeter/format checks for FundamentalAnalyst output: UK ticker
     suffix and explicit buy/sell directives — both fixed rules, not
     judgment calls, so no LLM is needed to verify them."""
     errors: list[str] = []
     for c in candidates:
+        if not isinstance(c, dict):
+            errors.append(
+                f"Elemento malformato in candidates (atteso un oggetto per candidato, "
+                f"ricevuto {type(c).__name__}: {c!r})."
+            )
+            continue
         ticker = c.get("ticker", "")
         if ticker.upper().endswith(".L"):
             errors.append(f"{ticker}: ticker LSE (suffisso .L) — fuori dall'universo US/EU.")
@@ -150,6 +181,14 @@ def check_risk_scoring_deterministic(risk_assessment: list[dict]) -> list[str]:
     scores intentionally 0)."""
     errors: list[str] = []
     for r in risk_assessment:
+        if not isinstance(r, dict):
+            errors.append(
+                f"Elemento malformato in risk_assessment (atteso un oggetto per candidato, "
+                f"ricevuto {type(r).__name__}: {r!r}) — ogni candidato deve avere ticker, "
+                f"scenarios, risks, falsification, quality e scoring anche se quality è "
+                f"'dati_insufficienti'."
+            )
+            continue
         if r.get("quality") == "dati_insufficienti":
             continue
         ticker = r.get("ticker", "")
@@ -162,7 +201,8 @@ def check_risk_scoring_deterministic(risk_assessment: list[dict]) -> list[str]:
 
 
 def check_compliance_format_deterministic(
-    compliance_results: list[dict], expected_tickers: list[str],
+    compliance_results: list[dict],
+    expected_tickers: list[str],
 ) -> list[str]:
     """Presence/non-empty checks on compliance verdicts: every expected
     ticker has exactly one verdict, and a compliant=false verdict always
@@ -170,6 +210,13 @@ def check_compliance_format_deterministic(
     errors: list[str] = []
     seen: dict[str, int] = {}
     for r in compliance_results:
+        if not isinstance(r, dict):
+            errors.append(
+                f"Elemento malformato in compliance_results (atteso un oggetto per candidato, "
+                f"ricevuto {type(r).__name__}: {r!r}) — ogni verdetto deve avere ticker, "
+                f"compliant, motivo e policy_refs."
+            )
+            continue
         ticker = r.get("ticker", "")
         seen[ticker] = seen.get(ticker, 0) + 1
         if not r.get("compliant", True):
@@ -201,9 +248,11 @@ def check_citation_ids_deterministic(report: dict, news: list[dict]) -> list[str
     cited_ids: set[str] = set()
 
     for tema in report.get("temi", []) or []:
-        cited_ids.update(tema.get("evidenze", []) or [])
+        if isinstance(tema, dict):
+            cited_ids.update(tema.get("evidenze", []) or [])
     for candidato in report.get("candidati", []) or []:
-        cited_ids.update(candidato.get("evidenze_citate", []) or [])
+        if isinstance(candidato, dict):
+            cited_ids.update(candidato.get("evidenze_citate", []) or [])
     text_blob = report.get("_sintesi_esecutiva", "") or ""
     cited_ids.update(_NEWS_ID_RE_ANYWHERE.findall(text_blob))
 
@@ -218,10 +267,17 @@ def check_citation_ids_deterministic(report: dict, news: list[dict]) -> list[str
 
 def _full_text(c) -> str:
     parts = [
-        c.tesi, c.catalizzatore, c.trigger_falsificazione,
-        c.scenari.base, c.scenari.bull, c.scenari.bear,
-        c.rischi.macro, c.rischi.settore, c.rischi.azienda,
-        c.rischi.regolatorio, c.rischi.valutazione,
+        c.tesi,
+        c.catalizzatore,
+        c.trigger_falsificazione,
+        c.scenari.base,
+        c.scenari.bull,
+        c.scenari.bear,
+        c.rischi.macro,
+        c.rischi.settore,
+        c.rischi.azienda,
+        c.rischi.regolatorio,
+        c.rischi.valutazione,
     ] + c.prossime_verifiche
     return " ".join(p for p in parts if p)
 
@@ -235,107 +291,170 @@ def validate(report: Report | None) -> list[Violation]:
     violations: list[Violation] = []
 
     if report is None:
-        violations.append(Violation(
-            rule="report_parsable", severity="error", ticker=None,
-            message="Il report non è parsabile: JSON mancante, troncato o malformato.",
-        ))
+        violations.append(
+            Violation(
+                rule="report_parsable",
+                severity="error",
+                ticker=None,
+                message="Il report non è parsabile: JSON mancante, troncato o malformato.",
+            )
+        )
         return violations
 
     if len(report.candidati) > 5:
-        violations.append(Violation(
-            rule="candidate_count", severity="warning", ticker=None,
-            message=f"Report contiene {len(report.candidati)} candidati (massimo 5).",
-        ))
+        violations.append(
+            Violation(
+                rule="candidate_count",
+                severity="warning",
+                ticker=None,
+                message=f"Report contiene {len(report.candidati)} candidati (massimo 5).",
+            )
+        )
 
     for c in report.candidati:
         text = _full_text(c)
 
         if c.ticker.upper().endswith(".L"):
-            violations.append(Violation(rule="no_uk_stocks", severity="error", ticker=c.ticker,
-                message=f"{c.ticker}: titolo LSE (UK) — escluso dall'universo."))
+            violations.append(
+                Violation(
+                    rule="no_uk_stocks",
+                    severity="error",
+                    ticker=c.ticker,
+                    message=f"{c.ticker}: titolo LSE (UK) — escluso dall'universo.",
+                )
+            )
 
         crypto_hits = _check_crypto(f"{c.ticker} {c.azienda}")
         if crypto_hits:
-            violations.append(Violation(rule="no_crypto", severity="error", ticker=c.ticker,
-                message=f"{c.ticker}: keyword crypto rilevata ({', '.join(sorted(crypto_hits))})."))
+            violations.append(
+                Violation(
+                    rule="no_crypto",
+                    severity="error",
+                    ticker=c.ticker,
+                    message=(
+                        f"{c.ticker}: keyword crypto rilevata ({', '.join(sorted(crypto_hits))})."
+                    ),
+                )
+            )
 
         if c.mercato not in _VALID_MARKETS:
-            violations.append(Violation(rule="market_scope", severity="error", ticker=c.ticker,
-                message=f"{c.ticker}: mercato='{c.mercato}' — solo US e EU ammessi."))
+            violations.append(
+                Violation(
+                    rule="market_scope",
+                    severity="error",
+                    ticker=c.ticker,
+                    message=f"{c.ticker}: mercato='{c.mercato}' — solo US e EU ammessi.",
+                )
+            )
 
         match = _check_directive(text)
         if match:
-            violations.append(Violation(
-                rule="no_buy_sell_directives", severity="error", ticker=c.ticker,
-                message=f"{c.ticker}: direttiva esplicita trovata — '{match.group()}'.",
-            ))
+            violations.append(
+                Violation(
+                    rule="no_buy_sell_directives",
+                    severity="error",
+                    ticker=c.ticker,
+                    message=f"{c.ticker}: direttiva esplicita trovata — '{match.group()}'.",
+                )
+            )
 
         if len(c.evidenze_citate) < 2:
-            violations.append(Violation(
-                rule="citation_count", severity="warning", ticker=c.ticker,
-                message=f"{c.ticker}: {len(c.evidenze_citate)} news citate (minimo 2).",
-            ))
+            violations.append(
+                Violation(
+                    rule="citation_count",
+                    severity="warning",
+                    ticker=c.ticker,
+                    message=f"{c.ticker}: {len(c.evidenze_citate)} news citate (minimo 2).",
+                )
+            )
         for nid in c.evidenze_citate:
             if not _NEWS_ID_RE.match(nid):
-                violations.append(Violation(
-                    rule="citation_format", severity="warning", ticker=c.ticker,
-                    message=(
-                        f"{c.ticker}: ID news non valido '{nid}' "
-                        "(formato atteso: N1, N2, ...)."
-                    ),
-                ))
+                violations.append(
+                    Violation(
+                        rule="citation_format",
+                        severity="warning",
+                        ticker=c.ticker,
+                        message=(
+                            f"{c.ticker}: ID news non valido '{nid}' (formato atteso: N1, N2, ...)."
+                        ),
+                    )
+                )
 
         matches, expected = _check_scoring_arithmetic(c.scoring)
         if not matches:
-            violations.append(Violation(
-                rule="score_arithmetic", severity="error", ticker=c.ticker,
-                message=(
-                    f"{c.ticker}: scoring.totale={c.scoring.totale} "
-                    f"ma somma dimensioni={expected}."
-                ),
-            ))
+            violations.append(
+                Violation(
+                    rule="score_arithmetic",
+                    severity="error",
+                    ticker=c.ticker,
+                    message=(
+                        f"{c.ticker}: scoring.totale={c.scoring.totale} "
+                        f"ma somma dimensioni={expected}."
+                    ),
+                )
+            )
 
         for dim in _SCORING_DIMS:
             val = getattr(c.scoring, dim)
             if not (1 <= val <= 10):
-                violations.append(Violation(
-                    rule="score_range", severity="error", ticker=c.ticker,
-                    message=f"{c.ticker}: scoring.{dim}={val} fuori range 1–10.",
-                ))
+                violations.append(
+                    Violation(
+                        rule="score_range",
+                        severity="error",
+                        ticker=c.ticker,
+                        message=f"{c.ticker}: scoring.{dim}={val} fuori range 1–10.",
+                    )
+                )
 
         if c.rating_qualita.lower() not in _VALID_RATINGS:
-            violations.append(Violation(
-                rule="quality_rating", severity="warning", ticker=c.ticker,
-                message=(
-                    f"{c.ticker}: rating_qualita='{c.rating_qualita}' "
-                    "non è uno di alta|media|bassa."
-                ),
-            ))
+            violations.append(
+                Violation(
+                    rule="quality_rating",
+                    severity="warning",
+                    ticker=c.ticker,
+                    message=(
+                        f"{c.ticker}: rating_qualita='{c.rating_qualita}' "
+                        "non è uno di alta|media|bassa."
+                    ),
+                )
+            )
 
         if c.consenso_analisti.giudizio_sintetico.lower() not in _VALID_GIUDIZI:
-            violations.append(Violation(
-                rule="consensus_giudizio", severity="warning", ticker=c.ticker,
-                message=(
-                    f"{c.ticker}: giudizio_sintetico="
-                    f"'{c.consenso_analisti.giudizio_sintetico}' non è un valore standard."
-                ),
-            ))
+            violations.append(
+                Violation(
+                    rule="consensus_giudizio",
+                    severity="warning",
+                    ticker=c.ticker,
+                    message=(
+                        f"{c.ticker}: giudizio_sintetico="
+                        f"'{c.consenso_analisti.giudizio_sintetico}' non è un valore standard."
+                    ),
+                )
+            )
 
     for t in report.temi:
         text = _full_text_tema(t)
         crypto_hits = _check_crypto(text)
         if crypto_hits:
             crypto_str = ", ".join(sorted(crypto_hits))
-            violations.append(Violation(
-                rule="no_crypto", severity="error", ticker=None,
-                message=f"Tema '{t.tema_id}': keyword crypto rilevata ({crypto_str}).",
-            ))
+            violations.append(
+                Violation(
+                    rule="no_crypto",
+                    severity="error",
+                    ticker=None,
+                    message=f"Tema '{t.tema_id}': keyword crypto rilevata ({crypto_str}).",
+                )
+            )
         match = _check_directive(text)
         if match:
-            violations.append(Violation(
-                rule="no_buy_sell_directives", severity="error", ticker=None,
-                message=f"Tema '{t.tema_id}': direttiva esplicita trovata — '{match.group()}'.",
-            ))
+            violations.append(
+                Violation(
+                    rule="no_buy_sell_directives",
+                    severity="error",
+                    ticker=None,
+                    message=f"Tema '{t.tema_id}': direttiva esplicita trovata — '{match.group()}'.",
+                )
+            )
 
     return violations
 
@@ -373,8 +492,12 @@ def validate_stage(stage: str, payload) -> tuple[object | None, list[Violation]]
 
     if stage == "report":
         return None, validate(payload) if payload is not None else [
-            Violation(rule="report_parsable", severity="error", ticker=None,
-                message="Il report non è parsabile: JSON mancante, troncato o malformato.")
+            Violation(
+                rule="report_parsable",
+                severity="error",
+                ticker=None,
+                message="Il report non è parsabile: JSON mancante, troncato o malformato.",
+            )
         ]
 
     try:
@@ -383,10 +506,14 @@ def validate_stage(stage: str, payload) -> tuple[object | None, list[Violation]]
         else:
             parsed = schema.model_validate(payload)
     except (ValidationError, TypeError) as e:
-        violations.append(Violation(
-            rule="schema_parse", severity="error", ticker=None,
-            message=f"{stage}: payload non conforme allo schema atteso — {e}",
-        ))
+        violations.append(
+            Violation(
+                rule="schema_parse",
+                severity="error",
+                ticker=None,
+                message=f"{stage}: payload non conforme allo schema atteso — {e}",
+            )
+        )
         return None, violations
 
     items = parsed if stage in _LIST_STAGES else [parsed]
@@ -395,16 +522,20 @@ def validate_stage(stage: str, payload) -> tuple[object | None, list[Violation]]
 
         injection_hit = _check_injection(" ".join(_collect_strings(item)))
         if injection_hit:
-            violations.append(Violation(
-                rule="injection_marker", severity="error", ticker=ticker,
-                message=(
-                    f"{stage}: marker di prompt injection rilevato — "
-                    f"'{injection_hit.group()}'."
-                ),
-            ))
+            violations.append(
+                Violation(
+                    rule="injection_marker",
+                    severity="error",
+                    ticker=ticker,
+                    message=(
+                        f"{stage}: marker di prompt injection rilevato — '{injection_hit.group()}'."
+                    ),
+                )
+            )
 
         text_fields = [
-            getattr(item, f, "") for f in ("thesis", "catalyst", "falsification")
+            getattr(item, f, "")
+            for f in ("thesis", "catalyst", "falsification")
             if isinstance(getattr(item, f, ""), str)
         ]
         text = " ".join(text_fields)
@@ -412,29 +543,41 @@ def validate_stage(stage: str, payload) -> tuple[object | None, list[Violation]]
         crypto_hits = _check_crypto(f"{ticker or ''} {text}")
         if crypto_hits:
             crypto_str = ", ".join(sorted(crypto_hits))
-            violations.append(Violation(
-                rule="no_crypto", severity="error", ticker=ticker,
-                message=f"{stage}: keyword crypto rilevata ({crypto_str}).",
-            ))
+            violations.append(
+                Violation(
+                    rule="no_crypto",
+                    severity="error",
+                    ticker=ticker,
+                    message=f"{stage}: keyword crypto rilevata ({crypto_str}).",
+                )
+            )
 
         match = _check_directive(text)
         if match:
-            violations.append(Violation(
-                rule="no_buy_sell_directives", severity="error", ticker=ticker,
-                message=f"{stage}: direttiva esplicita trovata — '{match.group()}'.",
-            ))
+            violations.append(
+                Violation(
+                    rule="no_buy_sell_directives",
+                    severity="error",
+                    ticker=ticker,
+                    message=f"{stage}: direttiva esplicita trovata — '{match.group()}'.",
+                )
+            )
 
         scoring = getattr(item, "scoring", None)
         if scoring is not None and hasattr(scoring, "totale"):
             matches, expected = _check_scoring_arithmetic(scoring)
             if not matches:
-                violations.append(Violation(
-                    rule="score_arithmetic", severity="error", ticker=ticker,
-                    message=(
-                        f"{stage}: scoring.totale={scoring.totale} "
-                        f"ma somma dimensioni={expected}."
-                    ),
-                ))
+                violations.append(
+                    Violation(
+                        rule="score_arithmetic",
+                        severity="error",
+                        ticker=ticker,
+                        message=(
+                            f"{stage}: scoring.totale={scoring.totale} "
+                            f"ma somma dimensioni={expected}."
+                        ),
+                    )
+                )
 
     if stage == "allocation":
         # Basic arithmetic sanity here (schema-level); the aggregate limit
@@ -443,21 +586,33 @@ def validate_stage(stage: str, payload) -> tuple[object | None, list[Violation]]
         total_weight = 0.0
         for item in parsed:
             if not (0 < item.peso_pct <= 100):
-                violations.append(Violation(
-                    rule="allocation_weight_range", severity="error", ticker=item.ticker,
-                    message=f"{item.ticker}: peso_pct={item.peso_pct} fuori range (0, 100].",
-                ))
+                violations.append(
+                    Violation(
+                        rule="allocation_weight_range",
+                        severity="error",
+                        ticker=item.ticker,
+                        message=f"{item.ticker}: peso_pct={item.peso_pct} fuori range (0, 100].",
+                    )
+                )
             else:
                 total_weight += item.peso_pct
             if not item.razionale.strip():
-                violations.append(Violation(
-                    rule="allocation_rationale", severity="error", ticker=item.ticker,
-                    message=f"{item.ticker}: razionale mancante per il peso assegnato.",
-                ))
+                violations.append(
+                    Violation(
+                        rule="allocation_rationale",
+                        severity="error",
+                        ticker=item.ticker,
+                        message=f"{item.ticker}: razionale mancante per il peso assegnato.",
+                    )
+                )
         if total_weight > 100.01:
-            violations.append(Violation(
-                rule="allocation_weights_sum", severity="error", ticker=None,
-                message=f"Somma dei pesi {total_weight:.1f}% > 100%.",
-            ))
+            violations.append(
+                Violation(
+                    rule="allocation_weights_sum",
+                    severity="error",
+                    ticker=None,
+                    message=f"Somma dei pesi {total_weight:.1f}% > 100%.",
+                )
+            )
 
     return parsed, violations

@@ -12,6 +12,7 @@ il browser parla con questo servizio, mai direttamente con gli agenti.
 
 Avvio: uv run uvicorn gateway.app:app --port 8000
 """
+
 import asyncio
 import json
 import os
@@ -33,7 +34,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from orchestrator.coordinator import interpret_prompt
 from orchestrator.main import AGENTS, _coordinator_client, run_pipeline
 from shared.auth import enforce_secret_policy
-from shared.db import append_turn, get_or_create_session, load_recent_turns
+from shared.db import append_turn, delete_session, get_or_create_session, load_recent_turns
 from shared.events import STREAM_END, end_stream, subscribe, unsubscribe
 from shared.log import get_logger
 from shared.rate_limit import RateLimiter
@@ -73,13 +74,15 @@ async def chat(req: ChatRequest):
     running = sum(1 for r in _runs.values() if r["status"] == "running")
     if running >= _MAX_CONCURRENT_RUNS:
         raise HTTPException(
-            status_code=429, detail="Troppe pipeline in corso, riprova tra poco.",
+            status_code=429,
+            detail="Troppe pipeline in corso, riprova tra poco.",
             headers={"Retry-After": "30"},
         )
 
     if not _rate_limiter.check():
         raise HTTPException(
-            status_code=429, detail="Troppe richieste, riprova tra poco.",
+            status_code=429,
+            detail="Troppe richieste, riprova tra poco.",
             headers={"Retry-After": "60"},
         )
 
@@ -105,13 +108,16 @@ async def chat(req: ChatRequest):
                 excluded_sectors=intent.excluded_sectors or _DEFAULT_EXCLUDED,
                 focus=intent.focus,
                 explicit_sector_scope=bool(intent.priority_sectors),
+                countries=intent.countries,
+                explicit_geo_scope=bool(intent.countries),
                 run_id=run_id,
                 open_browser=False,
             )
             _runs[run_id].update(status="completed", report_path=result.get("report_path"))
             if session_id:
-                await append_turn(session_id, "assistant",
-                                  result.get("executive_summary", ""), run_id=run_id)
+                await append_turn(
+                    session_id, "assistant", result.get("executive_summary", ""), run_id=run_id
+                )
         except Exception as e:
             _logger.error(f"Pipeline failed: {e}", extra={"event_type": "pipeline_failed"})
             _runs[run_id].update(status="failed", error=str(e))
@@ -130,8 +136,17 @@ async def chat(req: ChatRequest):
             "focus": intent.focus,
             "priority_sectors": intent.priority_sectors or _DEFAULT_PRIORITY,
             "excluded_sectors": intent.excluded_sectors or _DEFAULT_EXCLUDED,
+            "countries": intent.countries,
         },
     }
+
+
+@app.delete("/api/session/{session_id}")
+async def clear_session(session_id: str):
+    """Wipes the conversation's cross-session memory (Postgres) — the client
+    resets its own local state (messages, timeline, sessionId) separately."""
+    await delete_session(session_id)
+    return {"ok": True}
 
 
 @app.get("/api/stream/{run_id}")
