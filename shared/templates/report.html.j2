@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Equity Research Report &mdash; {{ label }}</title>
+  <title id="report-title">Equity Research Report &mdash; {{ label }}</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f9fafb; color: #111827; }
@@ -302,7 +302,7 @@
 
   <div class="page-header">
     <div class="page-header-label">Equity Research Analyst — A2A Pipeline</div>
-    <h1 class="page-title">{{ label }}</h1>
+    <h1 class="page-title" id="report-timestamp" data-iso="{{ now_iso }}">{{ label }}</h1>
     <div class="ctx-tags">
       {% for k, v in context.items() %}
         {% if v and v not in ("nessuna", "nessuno", "") %}
@@ -416,5 +416,24 @@
   </div>
 
 </div>
+<script>
+  // Server ships UTC (no reliable notion of "the reader's timezone" — a CLI
+  // run and a browser viewing it via the gateway can be on different
+  // machines/continents); render it in whichever timezone this browser is in.
+  (function () {
+    var el = document.getElementById("report-timestamp");
+    if (!el) return;
+    var iso = el.getAttribute("data-iso");
+    if (!iso) return;
+    var formatted = new Date(iso).toLocaleString("it-IT", {
+      day: "2-digit", month: "long", year: "numeric",
+      hour: "2-digit", minute: "2-digit",
+      timeZoneName: "short",
+    });
+    el.textContent = formatted;
+    var titleEl = document.getElementById("report-title");
+    if (titleEl) titleEl.textContent = "Equity Research Report — " + formatted;
+  })();
+</script>
 </body>
 </html>

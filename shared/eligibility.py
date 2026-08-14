@@ -11,6 +11,7 @@ at two different points in the pipeline:
   exists after DataCollector has fetched fundamentals — runs immediately
   after that, before FundamentalAnalyst spends any further work on them.
 """
+
 import re
 from pathlib import Path
 from typing import Any
@@ -56,17 +57,70 @@ def check_restricted_list(tickers: list[str]) -> tuple[list[str], list[dict[str,
 # be excluded, while an EU issuer trading as a US ADR (e.g. SAP/STM on NYSE,
 # country="Germany"/"Netherlands") stays in. `market` is only a fallback when
 # `country` is absent.
-_ALLOWED_COUNTRIES = {c.lower() for c in (
-    "United States",
-    "Austria", "Belgium", "Bulgaria", "Croatia", "Cyprus", "Czechia", "Czech Republic",
-    "Denmark", "Estonia", "Finland", "France", "Germany", "Greece", "Hungary", "Ireland",
-    "Italy", "Latvia", "Lithuania", "Luxembourg", "Malta", "Netherlands", "Poland",
-    "Portugal", "Romania", "Slovakia", "Slovenia", "Spain", "Sweden",
-)}
+_ALLOWED_COUNTRIES = {
+    c.lower()
+    for c in (
+        "United States",
+        "Austria",
+        "Belgium",
+        "Bulgaria",
+        "Croatia",
+        "Cyprus",
+        "Czechia",
+        "Czech Republic",
+        "Denmark",
+        "Estonia",
+        "Finland",
+        "France",
+        "Germany",
+        "Greece",
+        "Hungary",
+        "Ireland",
+        "Italy",
+        "Latvia",
+        "Lithuania",
+        "Luxembourg",
+        "Malta",
+        "Netherlands",
+        "Poland",
+        "Portugal",
+        "Romania",
+        "Slovakia",
+        "Slovenia",
+        "Spain",
+        "Sweden",
+    )
+}
 # ISO-ish country codes as they appear in yfinance's `market` field ("<cc>_market").
 _ALLOWED_MARKET_CC = {
-    "us", "at", "be", "bg", "hr", "cy", "cz", "dk", "ee", "fi", "fr", "de", "gr", "hu",
-    "ie", "it", "lv", "lt", "lu", "mt", "nl", "pl", "pt", "ro", "sk", "si", "es", "se",
+    "us",
+    "at",
+    "be",
+    "bg",
+    "hr",
+    "cy",
+    "cz",
+    "dk",
+    "ee",
+    "fi",
+    "fr",
+    "de",
+    "gr",
+    "hu",
+    "ie",
+    "it",
+    "lv",
+    "lt",
+    "lu",
+    "mt",
+    "nl",
+    "pl",
+    "pt",
+    "ro",
+    "sk",
+    "si",
+    "es",
+    "se",
 }
 
 
@@ -126,18 +180,21 @@ def check_data_quality(
         if usable:
             eligible.append(record)
         else:
-            dropped.append({
-                "ticker": record.get("ticker", ""),
-                "motivo_esclusione": (
-                    "Dati fondamentali non disponibili (prezzo mancante) — "
-                    "ticker non risolto a un'azione quotata."
-                ),
-            })
+            dropped.append(
+                {
+                    "ticker": record.get("ticker", ""),
+                    "motivo_esclusione": (
+                        "Dati fondamentali non disponibili (prezzo mancante) — "
+                        "ticker non risolto a un'azione quotata."
+                    ),
+                }
+            )
     return eligible, dropped
 
 
 def check_sector_scope(
-    fundamentals: list[dict[str, Any]], priority_sectors: list[str],
+    fundamentals: list[dict[str, Any]],
+    priority_sectors: list[str],
 ) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
     """Splits `fundamentals` into (eligible, blocked) by matching each record's
     sector/industry against `priority_sectors`, expanded via
@@ -161,8 +218,7 @@ def check_sector_scope(
     # a short keyword like "car" (from the automotive keyword set) falsely
     # match inside an unrelated word (e.g. "Healthcare").
     patterns = [
-        re.compile(r"\b" + re.escape(s) + r"\b")
-        for s in expand_sector_keywords(priority_sectors)
+        re.compile(r"\b" + re.escape(s) + r"\b") for s in expand_sector_keywords(priority_sectors)
     ]
 
     eligible: list[dict[str, Any]] = []
@@ -172,12 +228,52 @@ def check_sector_scope(
         if any(p.search(haystack) for p in patterns):
             eligible.append(record)
         else:
-            blocked.append({
-                "ticker": record.get("ticker", ""),
-                "motivo_esclusione": (
-                    f"Fuori dal settore richiesto ({', '.join(priority_sectors)})."
-                ),
-            })
+            blocked.append(
+                {
+                    "ticker": record.get("ticker", ""),
+                    "motivo_esclusione": (
+                        f"Fuori dal settore richiesto ({', '.join(priority_sectors)})."
+                    ),
+                }
+            )
+    return eligible, blocked
+
+
+def check_country_scope(
+    fundamentals: list[dict[str, Any]],
+    countries: list[str],
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    """Splits `fundamentals` into (eligible, blocked) by matching each
+    record's issuer domicile (yfinance `country`) against `countries`,
+    case-insensitive exact match — unlike check_sector_scope this needs no
+    keyword expansion, since yfinance's `country` field is already a precise
+    name (e.g. "Italy"), not a free-text taxonomy to bridge.
+
+    Only call this when the user explicitly scoped the request to specific
+    country/countries — NewsSentiment's discovery prompt otherwise treats the
+    coordinator's `focus` text as a soft hint, so without this backstop a
+    candidate from an unrelated country (e.g. a US tech ticker surfacing from
+    the generic RSS scan when the user asked for "mercato azionario
+    italiano") can reach the final report. Do not use this for the default
+    unscoped discovery flow."""
+    requested = {c.lower() for c in countries}
+
+    eligible: list[dict[str, Any]] = []
+    blocked: list[dict[str, str]] = []
+    for record in fundamentals:
+        country = (record.get("country") or "").strip()
+        if country.lower() in requested:
+            eligible.append(record)
+        else:
+            blocked.append(
+                {
+                    "ticker": record.get("ticker", ""),
+                    "motivo_esclusione": (
+                        f"Fuori dal paese/mercato richiesto ({', '.join(countries)}): "
+                        f"emittente domiciliato in {country or 'paese non determinabile'}."
+                    ),
+                }
+            )
     return eligible, blocked
 
 
@@ -196,10 +292,12 @@ def check_esg_exclusions(
         haystack = f"{record.get('sector', '')} {record.get('industry', '')}".lower()
         hit = next((s for s in excluded_sectors if s in haystack), None)
         if hit:
-            blocked.append({
-                "ticker": record.get("ticker", ""),
-                "motivo_esclusione": f"Settore escluso da policy ESG: {hit}.",
-            })
+            blocked.append(
+                {
+                    "ticker": record.get("ticker", ""),
+                    "motivo_esclusione": f"Settore escluso da policy ESG: {hit}.",
+                }
+            )
         else:
             eligible.append(record)
     return eligible, blocked

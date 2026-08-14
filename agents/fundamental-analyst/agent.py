@@ -4,6 +4,7 @@ Riceve news/temi dal News & Sentiment e fondamentali dal Data Collector,
 identifica fino a 5 candidati equity con tesi d'investimento specifica.
 Mappa theme_analyst + stock_screener di CrewAI.
 """
+
 import asyncio
 import json
 import os
@@ -48,11 +49,14 @@ Rispondi SOLO con la prima riga esattamente "QA: APPROVATO" oppure "QA: DA_CORRE
 # Tool                                                                 #
 # ------------------------------------------------------------------ #
 
+
 def _make_fetch_fundamentals_tool(correlation_id: str) -> ToolSpec:
     async def _fetch_fundamentals(ticker: str) -> str:
         result = await asyncio.to_thread(get_stock_fundamentals_text, ticker)
         await log_event(
-            correlation_id, "external_fetch", "fundamental_analyst",
+            correlation_id,
+            "external_fetch",
+            "fundamental_analyst",
             payload={"source": "yfinance", "ticker": ticker},
             status="error" if result.startswith("Error") else "completed",
         )
@@ -71,6 +75,7 @@ def _make_fetch_fundamentals_tool(correlation_id: str) -> ToolSpec:
         },
         handler=_fetch_fundamentals,
     )
+
 
 _MODEL = os.getenv("FUNDAMENTAL_ANALYST_MODEL", "claude-sonnet-5")
 _QA_MODEL = os.getenv("FUNDAMENTAL_ANALYST_QA_MODEL", "claude-sonnet-5")
@@ -99,8 +104,15 @@ Any other US/EU listed-equity sector is allowed.
 
 PRIORITY SECTORS (preference, not exclusivity):
 {priority_sectors}
-
+{coverage_instruction}
 When ready, call submit_final_answer with the equity candidates."""
+
+_COVERAGE_INSTRUCTION_SPECIFIC = """
+MANDATORY COVERAGE — the user named these exact tickers, so none may silently disappear:
+every ticker present in PRE-FETCHED FUNDAMENTALS must end up in EITHER `candidates` (with a
+thesis) OR `non_selezionati` (with a short reason, e.g. "ETF/fondo, non un'azione", "nessun
+fit tematico con il focus richiesto", "copertura analisti insufficiente per una tesi
+solida"). Do not just omit a ticker from the output."""
 
 _OUTPUT_SCHEMA = {
     "type": "object",
@@ -115,7 +127,10 @@ _OUTPUT_SCHEMA = {
                     "market": {"type": "string", "enum": ["US", "EU"]},
                     "theme_id": {"type": "string"},
                     "thesis": {"type": "string", "description": "3-4 sentences, company-specific"},
-                    "catalyst": {"type": "string", "description": "2 sentences, specific trigger and timeline"},
+                    "catalyst": {
+                        "type": "string",
+                        "description": "2 sentences, specific trigger and timeline",
+                    },
                     "news_ids": {"type": "array", "items": {"type": "string"}},
                     "fundamentals": {
                         "type": "object",
@@ -145,6 +160,22 @@ _OUTPUT_SCHEMA = {
                 "required": ["ticker", "company", "market", "thesis", "catalyst"],
             },
         },
+        "non_selezionati": {
+            "type": "array",
+            "description": (
+                "Tickers from PRE-FETCHED FUNDAMENTALS considered but not chosen as "
+                "candidates, each with a short reason (only required in 'specific' mode, "
+                "see MANDATORY COVERAGE instruction)."
+            ),
+            "items": {
+                "type": "object",
+                "properties": {
+                    "ticker": {"type": "string"},
+                    "motivo": {"type": "string"},
+                },
+                "required": ["ticker", "motivo"],
+            },
+        },
     },
     "required": ["candidates"],
 }
@@ -163,10 +194,14 @@ async def run_agent(task: A2ATask) -> A2ATaskResult:
     priority_sectors = ", ".join(input_data.get("priority_sectors", ["Technology"]))
     excluded_sectors = ", ".join(input_data.get("excluded_sectors", ["crypto", "DeFi", "Web3"]))
     feedback = input_data.get("validation_feedback", "")
+    coverage_instruction = (
+        _COVERAGE_INSTRUCTION_SPECIFIC if input_data.get("mode") == "specific" else ""
+    )
 
     instructions = _INSTRUCTIONS.format(
         priority_sectors=priority_sectors,
-        excluded_sectors=excluded_sectors
+        excluded_sectors=excluded_sectors,
+        coverage_instruction=coverage_instruction,
     )
 
     prompt = (
@@ -192,13 +227,37 @@ async def run_agent(task: A2ATask) -> A2ATaskResult:
             output_schema=_OUTPUT_SCHEMA,
         )
         candidates = result["candidates"]
+        non_selezionati = result.get("non_selezionati", [])
 
         det_errors = check_candidates_deterministic(candidates)
         if det_errors:
             return A2ATaskResult.invalid(task.id, " ".join(det_errors))
 
+        # In "specific" mode the user named these exact tickers — don't trust the
+        # prompt instruction alone to keep every one accounted for (candidate or
+        # non_selezionati), verify it deterministically, same spirit as
+        # check_candidates_deterministic above.
+        if input_data.get("mode") == "specific":
+            input_tickers = {
+                f.get("ticker", "").upper() for f in input_data.get("fundamentals", [])
+            }
+            covered = {c.get("ticker", "").upper() for c in candidates} | {
+                n.get("ticker", "").upper() for n in non_selezionati
+            }
+            missing = input_tickers - covered
+            if missing:
+                return A2ATaskResult.invalid(
+                    task.id,
+                    f"Ticker mancanti dall'output (né in candidates né in non_selezionati): "
+                    f"{', '.join(sorted(missing))}. Ogni ticker fornito in PRE-FETCHED "
+                    f"FUNDAMENTALS deve comparire in uno dei due elenchi.",
+                )
+
         approved, qa_text = run_llm_qa(
-            _qa_client, _QA_SYSTEM, json.dumps(candidates, ensure_ascii=False), model=_QA_MODEL,
+            _qa_client,
+            _QA_SYSTEM,
+            json.dumps(candidates, ensure_ascii=False),
+            model=_QA_MODEL,
         )
         if not approved:
             return A2ATaskResult.invalid(task.id, qa_text)
@@ -206,10 +265,11 @@ async def run_agent(task: A2ATask) -> A2ATaskResult:
         return A2ATaskResult.ok(
             task.id,
             f"Identified {len(candidates)} equity candidate(s).",
-            data={"candidates": candidates},
+            data={"candidates": candidates, "non_selezionati": non_selezionati},
         )
     except Exception as e:
         import traceback
+
         traceback.print_exc()
         causes, current = [], e
         while current:

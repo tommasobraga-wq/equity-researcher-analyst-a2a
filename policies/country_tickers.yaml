@@ -1,0 +1,257 @@
+# Country reference map — same role as policies/sector_tickers.yaml but keyed
+# by issuer domicile (yfinance `country`, matched by shared/eligibility.py::
+# check_country_scope) instead of sector. Used by shared/country_seed.py's
+# load_country_seed_tickers() as the fallback candidate pool when, in
+# "discovery" mode, the user explicitly requested a country/market and
+# NewsSentiment's generic RSS scan (all US/international sources, no
+# country-specific feed) found no candidates domiciled there — a second
+# NewsSentiment call targets `tickers` below via the same per-ticker
+# read_ticker_news lookup already used in "specific" mode. Always surfaced to
+# the user via nota_metodologica in the final report — never silent.
+#
+# Not exhaustive by design, same posture as sector_tickers.yaml: the country
+# name is free text extracted by the coordinator from the user's prompt. If a
+# requested country has no matching entry here, no fallback is attempted.
+#
+# Key must match yfinance's `country` field value used by
+# shared/eligibility.py::_ALLOWED_COUNTRIES (English name, e.g. "Italy").
+#
+# Scope: the 5 largest EU-27 equity markets (Italy already existing, plus
+# Germany/France/Spain/Netherlands/Belgium) — deliberately not all 27, since
+# large-economy issuers already have some chance of surfacing in the generic
+# US/international RSS scan, while the smallest EU markets (Baltics, Balkans,
+# Malta, Cyprus...) are the ones most exposed to zero coverage; those are left
+# for when actually requested, rather than guessed at speculatively.
+#
+# Every ticker below was verified against yfinance's own `country` field
+# (not just index membership) before inclusion — several well-known index
+# constituents are legally domiciled in a DIFFERENT country than where they
+# are best known/headquartered (e.g. Airbus, Stellantis, STMicroelectronics,
+# ArcelorMittal, argenx are all Netherlands-domiciled N.V.s regardless of
+# listing venue; Ferrovial redomiciled to the Netherlands in 2023; Tenaris
+# and Eurofins Scientific are Luxembourg-domiciled), so a naive "index
+# constituent" list would put tickers in the wrong bucket and have Gate 1's
+# check_country_scope reject them for the very country their index suggests.
+# Index composition also changes periodically (quarterly review) — this list
+# may drift from the live index over time and needs occasional manual refresh.
+
+# FTSE MIB (Borsa Italiana). STLAM.MI (Stellantis) and STMMI.MI
+# (STMicroelectronics) were removed from here — both are Netherlands N.V.s
+# per yfinance `country`, not Italy — and TEN.MI (Tenaris) is Luxembourg.
+Italy:
+  tickers:
+    - A2A.MI
+    - AMP.MI
+    - G.MI
+    - AZM.MI
+    - BAMI.MI
+    - BMPS.MI
+    - BPE.MI
+    - BMED.MI
+    - BC.MI
+    - BZU.MI
+    - CPR.MI
+    - DIA.MI
+    - ENEL.MI
+    - ENI.MI
+    - RACE.MI
+    - FBK.MI
+    - HER.MI
+    - IP.MI
+    - ISP.MI
+    - INW.MI
+    - IVG.MI
+    - IG.MI
+    - LDO.MI
+    - MB.MI
+    - MONC.MI
+    - NEXI.MI
+    - PST.MI
+    - PRY.MI
+    - REC.MI
+    - SPM.MI
+    - SRG.MI
+    - TIT.MI
+    - TRN.MI
+    - UCG.MI
+    - UNI.MI
+
+# DAX 40 (Deutsche Börse, ".DE"). AIR.DE (Airbus) and QIA.DE (Qiagen) removed
+# — both Netherlands-domiciled per yfinance, moved to Netherlands below.
+Germany:
+  tickers:
+    - ADS.DE
+    - ALV.DE
+    - BAS.DE
+    - BAYN.DE
+    - BEI.DE
+    - BMW.DE
+    - BNR.DE
+    - CBK.DE
+    - CON.DE
+    - 1COV.DE
+    - DHL.DE
+    - DBK.DE
+    - DB1.DE
+    - DTE.DE
+    - DTG.DE
+    - EOAN.DE
+    - FRE.DE
+    - FME.DE
+    - HNR1.DE
+    - HEI.DE
+    - HEN3.DE
+    - IFX.DE
+    - MBG.DE
+    - MRK.DE
+    - MTX.DE
+    - MUV2.DE
+    - PAH3.DE
+    - P911.DE
+    - PUM.DE
+    - RHM.DE
+    - RWE.DE
+    - SAP.DE
+    - SRT3.DE
+    - SIE.DE
+    - ENR.DE
+    - SHL.DE
+    - SY1.DE
+    - VOW3.DE
+    - VNA.DE
+    - ZAL.DE
+
+# CAC 40 (Euronext Paris, ".PA"). AIR.PA (Airbus), STLAP.PA (Stellantis) and
+# STMPA.PA (STMicroelectronics) removed — Netherlands-domiciled, moved below.
+# ERF.PA (Eurofins) is Luxembourg-domiciled, dropped (not covered here).
+# ML.PA (Michelin) dropped — yfinance returned no `country` value for it, so
+# domicile can't be verified programmatically; excluded rather than guessed.
+France:
+  tickers:
+    - AC.PA
+    - AI.PA
+    - ALO.PA
+    - CS.PA
+    - BNP.PA
+    - EN.PA
+    - CAP.PA
+    - CA.PA
+    - ACA.PA
+    - BN.PA
+    - DSY.PA
+    - EDEN.PA
+    - ENGI.PA
+    - EL.PA
+    - RMS.PA
+    - KER.PA
+    - OR.PA
+    - LR.PA
+    - MC.PA
+    - ORA.PA
+    - RI.PA
+    - PUB.PA
+    - RNO.PA
+    - SAF.PA
+    - SGO.PA
+    - SAN.PA
+    - SU.PA
+    - GLE.PA
+    - TEP.PA
+    - HO.PA
+    - TTE.PA
+    - URW.PA
+    - VIE.PA
+    - DG.PA
+    - WLN.PA
+
+# IBEX 35 (Bolsa de Madrid, ".MC"). FER.MC (Ferrovial) redomiciled to the
+# Netherlands in 2023, dropped. IAG.MC (IAG) is UK-domiciled, dropped (also
+# outside the US/EU-27 market perimeter regardless).
+Spain:
+  tickers:
+    - ACS.MC
+    - ACX.MC
+    - AENA.MC
+    - AMS.MC
+    - ANA.MC
+    - BBVA.MC
+    - SAB.MC
+    - SAN.MC
+    - BKT.MC
+    - CABK.MC
+    - CLNX.MC
+    - COL.MC
+    - ENG.MC
+    - ELE.MC
+    - GRF.MC
+    - IBE.MC
+    - ITX.MC
+    - IDR.MC
+    - LOG.MC
+    - MAP.MC
+    - MRL.MC
+    - NTGY.MC
+    - PUIG.MC
+    - RED.MC
+    - REP.MC
+    - ROVI.MC
+    - SLR.MC
+    - TEF.MC
+    - VIS.MC
+
+# AEX 25 (Euronext Amsterdam, ".AS") plus companies confirmed Netherlands-
+# domiciled despite listing/being widely known elsewhere: AIR.DE (Airbus,
+# also trades in Paris/Madrid), QIA.DE (Qiagen), STLAM.MI (Stellantis, also
+# trades in Milan/Paris/NYSE), STMMI.MI (STMicroelectronics, also trades in
+# Paris), ARGX.BR (argenx, also trades in Brussels). MT.AS (ArcelorMittal) is
+# Luxembourg-domiciled, dropped (not covered here). DSFIR.AS (DSM-Firmenich)
+# is Switzerland-domiciled, dropped.
+Netherlands:
+  tickers:
+    - ABN.AS
+    - ADYEN.AS
+    - AD.AS
+    - AGN.AS
+    - AKZA.AS
+    - ASM.AS
+    - ASML.AS
+    - ASRNL.AS
+    - BESI.AS
+    - EXO.AS
+    - FUR.AS
+    - HEIA.AS
+    - IMCD.AS
+    - INGA.AS
+    - KPN.AS
+    - NN.AS
+    - PHIA.AS
+    - PRX.AS
+    - RAND.AS
+    - UMG.AS
+    - WKL.AS
+    - AIR.DE
+    - QIA.DE
+    - STLAM.MI
+    - STMMI.MI
+    - ARGX.BR
+
+# BEL 20 (Euronext Brussels, ".BR"). ARGX.BR (argenx) removed — Netherlands-
+# domiciled per yfinance, moved to Netherlands above.
+Belgium:
+  tickers:
+    - ABI.BR
+    - ACKB.BR
+    - AED.BR
+    - AGS.BR
+    - COFB.BR
+    - COLR.BR
+    - ELI.BR
+    - GBLB.BR
+    - KBC.BR
+    - MELE.BR
+    - ONTEX.BR
+    - PROX.BR
+    - SOF.BR
+    - SOLB.BR
+    - UCB.BR
+    - UMI.BR

@@ -36,6 +36,7 @@ from orchestrator.coordinator import CoordinatorIntent, interpret_prompt
 from shared.a2a_models import A2ATaskResult, JsonRpcRequest, JsonRpcResponse
 from shared.audit import log_event
 from shared.auth import enforce_secret_policy, sign, verify
+from shared.country_seed import load_country_seed_tickers
 from shared.db import (
     append_turn,
     get_or_create_session,
@@ -45,6 +46,7 @@ from shared.db import (
     save_run_state,
 )
 from shared.eligibility import (
+    check_country_scope,
     check_data_quality,
     check_esg_exclusions,
     check_market_perimeter,
@@ -102,12 +104,17 @@ class PipelineState(TypedDict):
     excluded_sectors: list[str]
     explicit_sector_scope: bool  # True only when the user named a sector in a "discovery" prompt
     sector_fallback_note: str  # set when the sector-seed fallback actually supplied candidates
+    countries: list[str]  # English country names, if the user named one in a "discovery" prompt
+    explicit_geo_scope: bool  # True only when the user named a country/market explicitly
+    geo_fallback_note: str  # set when the country-seed fallback actually supplied candidates
     fundamentals: list
     news: list
     themes: list
     candidates: list
     risk_assessment: list
     gate1_excluded: list[dict]  # tickers blocked by shared/eligibility.py (restricted list, ESG)
+    thesis_rejected: list[dict]  # "specific" mode: user-named tickers FundamentalAnalyst
+    # considered but didn't turn into a candidate (non_selezionati)
     compliance_flagged: list[dict]  # candidates blocked by ComplianceAgent (Gate 2, policy RAG)
     compliance_checked: bool  # True once ComplianceAgent has run for this state
     allocation: list[dict]  # PM's proposed weights, already past Gate 3 when persisted clean
@@ -206,12 +213,14 @@ async def send_task(
     return result
 
 
-_RATE_LIMIT_KEYWORDS = (
+_RETRIABLE_ERROR_KEYWORDS = (
     "rate_limit",
     "rate limit",
     "too many requests",
     "concurrent connections",
     "429",
+    "overloaded_error",
+    "529",
 )
 
 
@@ -222,26 +231,32 @@ async def send_task_with_retry(
     data: dict[str, Any] | None = None,
     timeout: float = 300.0,
     max_retries: int = 5,
-    retry_delay: float = 90.0,
+    base_retry_delay: float = 90.0,
+    max_retry_delay: float = 300.0,
 ) -> A2ATaskResult:
     for attempt in range(max_retries):
         result = await send_task(agent_url, agent_name, message, data, timeout)
         if result.status != "failed":
             return result
         error_text = result.message.text().lower()
-        if not any(kw in error_text for kw in _RATE_LIMIT_KEYWORDS):
+        if not any(kw in error_text for kw in _RETRIABLE_ERROR_KEYWORDS):
             return result
         if attempt < max_retries - 1:
+            # Exponential backoff (base * 2^attempt, capped): a fixed delay
+            # doesn't ease server-side load the way a growing one does, and
+            # is the standard approach for both rate-limit (429) and
+            # overloaded (529) transient errors.
+            delay = min(base_retry_delay * (2**attempt), max_retry_delay)
             print(
-                f"      ⚠ Rate limit — waiting {retry_delay:.0f}s "
+                f"      ⚠ Errore transitorio (rate limit/overload) — waiting {delay:.0f}s "
                 f"(retry {attempt + 1}/{max_retries - 1})..."
             )
             _logger.warning(
-                f"Rate limit — retrying in {retry_delay:.0f}s "
+                f"Errore transitorio (rate limit/overload) — retrying in {delay:.0f}s "
                 f"(attempt {attempt + 1}/{max_retries - 1})",
-                extra={"agent": agent_name, "event_type": "rate_limit_retry"},
+                extra={"agent": agent_name, "event_type": "retriable_error_retry"},
             )
-            await asyncio.sleep(retry_delay)
+            await asyncio.sleep(delay)
     return result
 
 
@@ -371,10 +386,30 @@ async def _collect_fundamentals(
             )
             emit(state.get("run_id"), "gate1_block", check="sector_scope", blocked=sector_blocked)
 
+    # Gate 1 (country scope) — same rationale/trigger as sector scope above,
+    # for an explicitly requested country/market (state["explicit_geo_scope"]).
+    # NewsSentiment's RSS sources are all US/international with no
+    # country-specific feed, so without this a candidate from an unrelated
+    # country (e.g. a US tech ticker surfacing from generic coverage when the
+    # user asked for "mercato azionario italiano") can reach the final report.
+    country_blocked: list[dict[str, str]] = []
+    if state.get("mode") == "discovery" and state.get("explicit_geo_scope"):
+        eligible_fundamentals, country_blocked = check_country_scope(
+            eligible_fundamentals,
+            state["countries"],
+        )
+        if country_blocked:
+            country_str = ", ".join(b["ticker"] for b in country_blocked)
+            print(
+                f"      ⚠ Gate 1 (paese): "
+                f"{len(country_blocked)} ticker(s) fuori scope — {country_str}"
+            )
+            emit(state.get("run_id"), "gate1_block", check="country_scope", blocked=country_blocked)
+
     if not eligible_fundamentals:
         raise RuntimeError(
             "Nessun candidato con dati fondamentali validi dopo i filtri Gate 1 "
-            "(dati mancanti / perimetro US-EU / ESG / settore) — nulla da analizzare."
+            "(dati mancanti / perimetro US-EU / ESG / settore / paese) — nulla da analizzare."
         )
 
     print(f"      → {len(eligible_fundamentals)} ticker(s) fetched")
@@ -386,6 +421,7 @@ async def _collect_fundamentals(
             *geo_blocked,
             *esg_blocked,
             *sector_blocked,
+            *country_blocked,
         ],
         "retries": {**state["retries"], stage: 0},
     }
@@ -416,6 +452,8 @@ async def _fetch_news(
             "priority_sectors": state["priority_sectors"],
             "excluded_sectors": state["excluded_sectors"],
             "explicit_sector_scope": state.get("explicit_sector_scope", False),
+            "countries": state.get("countries", []),
+            "explicit_geo_scope": state.get("explicit_geo_scope", False),
             "focus": focus,
             "tickers": tickers or [],
             "validation_feedback": feedback,
@@ -593,6 +631,70 @@ async def _try_sector_seed_fallback(state: PipelineState, exclude: list[str]) ->
     }
 
 
+async def _try_country_seed_fallback(state: PipelineState, exclude: list[str]) -> dict | None:
+    """Country-scope counterpart of _try_sector_seed_fallback — same trigger
+    point and mechanics, for an explicitly requested country/market
+    (state["explicit_geo_scope"]) instead of a sector. Exists because
+    NewsSentiment's RSS sources (shared/tools/rss_feed.py) are all
+    US/international with no country-specific feed, so a generic scan for
+    e.g. "mercato azionario italiano" can easily surface zero — or entirely
+    the wrong country's — candidates. Uses policies/country_tickers.yaml via
+    shared/country_seed.py. See _try_sector_seed_fallback's docstring for why
+    this only runs from node_data_collector_from_candidates."""
+    all_seed = load_country_seed_tickers(state["countries"])
+    seed_tickers = [t for t in all_seed if t not in exclude]
+    if not seed_tickers:
+        return None
+
+    countries_str = ", ".join(state["countries"])
+    seed_str = ", ".join(seed_tickers)
+    print(
+        f"      ⚠ Nessun candidato utilizzabile per il paese richiesto ({countries_str}) — "
+        f"fallback: ricerca dedicata su ticker noti del paese ({seed_str})"
+    )
+    emit(
+        state.get("run_id"),
+        "country_fallback",
+        countries=state["countries"],
+        seed_tickers=seed_tickers,
+    )
+    try:
+        fallback_result = await _fetch_news(
+            state,
+            focus=state.get("focus", ""),
+            stage="news_sentiment_country_fallback",
+            tickers=seed_tickers,
+        )
+    except RuntimeError as e:
+        print(f"      ⚠ Fallback per paese non riuscito: {e}")
+        return None
+
+    if "news" not in fallback_result:
+        print("      ⚠ Fallback per paese: risposta non valida, nessun dato utilizzabile.")
+        return None
+
+    no_coverage = fallback_result.get("tickers_without_coverage", [])
+    covered = [t for t in seed_tickers if t not in no_coverage]
+    if not covered:
+        print(
+            "      ⚠ Fallback per paese: nessuna notizia trovata nemmeno sui ticker noti del paese."
+        )
+        return None
+
+    covered_str = ", ".join(covered)
+    return {
+        "news": fallback_result.get("news", []),
+        "themes": fallback_result.get("themes", []),
+        "candidate_tickers": covered,
+        "note": (
+            f"Nessun candidato utilizzabile dal flusso notizie primario per il paese "
+            f"richiesto ({countries_str}); sono stati verificati ticker noti del paese "
+            f"({seed_str}) tramite ricerca notizie dedicata per singola azienda, con esito "
+            f"positivo per: {covered_str}."
+        ),
+    }
+
+
 async def node_data_collector_from_candidates(state: PipelineState) -> dict:
     """ "discovery" mode, stage 2: fetch fundamentals for the candidates
     NewsSentiment proposed in stage 1 — after Gate 1's restricted-list check
@@ -691,6 +793,39 @@ async def node_data_collector_from_candidates(state: PipelineState) -> dict:
                         "sector_fallback_note": fallback["note"],
                     }
 
+    if result is None and state.get("mode") == "discovery" and state.get("explicit_geo_scope"):
+        fallback = await _try_country_seed_fallback(state, tickers)
+        if fallback:
+            fb_tickers, fb_restricted = check_restricted_list(fallback["candidate_tickers"])
+            if fb_tickers:
+                augmented_state = {
+                    **state,
+                    "gate1_excluded": [
+                        *state.get("gate1_excluded", []),
+                        *restricted_blocked,
+                        *fb_restricted,
+                    ],
+                }
+                try:
+                    fb_collected = await _collect_fundamentals(
+                        augmented_state,
+                        fb_tickers,
+                        "data_collector",
+                    )
+                except RuntimeError:
+                    fb_collected = None
+                if fb_collected is not None and "fundamentals" not in fb_collected:
+                    # Same invalid-batch handling as above, for the fallback tickers.
+                    return fb_collected
+                if fb_collected is not None:
+                    result = {
+                        **fb_collected,
+                        "news": [*state.get("news", []), *fallback["news"]],
+                        "themes": [*state.get("themes", []), *fallback["themes"]],
+                        "candidate_tickers": fb_tickers,
+                        "geo_fallback_note": fallback["note"],
+                    }
+
     if result is None:
         if state.get("explicit_sector_scope"):
             raise RuntimeError(
@@ -699,6 +834,14 @@ async def node_data_collector_from_candidates(state: PipelineState) -> dict:
                 "generica né la ricerca dedicata sui titoli noti del settore hanno prodotto "
                 "candidati validi al momento dell'analisi. Riprova più tardi o allarga la "
                 "richiesta ad altri settori."
+            )
+        if state.get("explicit_geo_scope"):
+            raise RuntimeError(
+                "Nessuna opportunità azionaria identificata per il paese richiesto "
+                f"({', '.join(state.get('countries', []))}): né la rassegna stampa generica "
+                "né la ricerca dedicata sui titoli noti del paese hanno prodotto candidati "
+                "validi al momento dell'analisi. Riprova più tardi o allarga la richiesta ad "
+                "altri mercati."
             )
         if not tickers:
             raise RuntimeError(
@@ -728,6 +871,7 @@ async def node_fundamental_analyst(state: PipelineState) -> dict:
             "priority_sectors": state["priority_sectors"],
             "excluded_sectors": state["excluded_sectors"],
             "validation_feedback": feedback,
+            "mode": state.get("mode"),
         },
         timeout=300.0,
     )
@@ -745,8 +889,28 @@ async def node_fundamental_analyst(state: PipelineState) -> dict:
     if errors:
         return _record_invalid(state, stage, _feedback_text(errors))
 
+    # "specific" mode only — user-named tickers FundamentalAnalyst didn't turn into a
+    # candidate (ETF/no thematic fit/thin coverage), disclosed via candidati_esclusi
+    # the same way gate1_excluded/compliance_flagged already are (node_report_writer).
+    non_selezionati = _extract_data(result, "non_selezionati") or []
+    thesis_rejected = [
+        {"ticker": n.get("ticker", ""), "motivo_esclusione": n.get("motivo", "")}
+        for n in non_selezionati
+    ]
+    if thesis_rejected:
+        rejected_str = ", ".join(t["ticker"] for t in thesis_rejected)
+        print(
+            f"      ⚠ Non selezionati da FundamentalAnalyst: "
+            f"{len(thesis_rejected)} ticker(s) — {rejected_str}"
+        )
+        emit(state.get("run_id"), "thesis_rejected", rejected=thesis_rejected)
+
     print(f"      → {len(candidates)} candidate(s) identified")
-    return {"candidates": candidates, "retries": {**state["retries"], stage: 0}}
+    return {
+        "candidates": candidates,
+        "thesis_rejected": [*state.get("thesis_rejected", []), *thesis_rejected],
+        "retries": {**state["retries"], stage: 0},
+    }
 
 
 async def node_risk_assessor(state: PipelineState) -> dict:
@@ -964,11 +1128,13 @@ async def node_report_writer(state: PipelineState) -> dict:
     summary = _extract_data(result, "executive_summary") or result.message.text()
     qa = _extract_data(result, "qa_verdict") or ""
 
-    # Merge Gate 1/Gate 2 exclusions into candidati_esclusi deterministically —
+    # Merge Gate 1/Gate 2 exclusions (plus FundamentalAnalyst's disclosed
+    # non-selections in "specific" mode) into candidati_esclusi deterministically —
     # in Python, not via the LLM prompt — so compliance-critical exclusion data
     # can never be dropped or reworded by report generation.
     gate_excluded = [
         *state.get("gate1_excluded", []),
+        *state.get("thesis_rejected", []),
         *state.get("compliance_flagged", []),
         *state.get("allocation_esclusi", []),
     ]
@@ -991,6 +1157,13 @@ async def node_report_writer(state: PipelineState) -> dict:
             f"{existing} {state['sector_fallback_note']}".strip()
             if existing
             else state["sector_fallback_note"]
+        )
+    if state.get("geo_fallback_note"):
+        existing = report.get("nota_metodologica", "")
+        report["nota_metodologica"] = (
+            f"{existing} {state['geo_fallback_note']}".strip()
+            if existing
+            else state["geo_fallback_note"]
         )
 
     try:
@@ -1214,6 +1387,8 @@ async def run_pipeline(
     excluded_sectors: list[str],
     focus: str = "",
     explicit_sector_scope: bool = False,
+    countries: list[str] | None = None,
+    explicit_geo_scope: bool = False,
     resume_run_id: str | None = None,
     run_id: str | None = None,
     open_browser: bool = True,
@@ -1257,12 +1432,16 @@ async def run_pipeline(
             "excluded_sectors": excluded_sectors,
             "explicit_sector_scope": explicit_sector_scope,
             "sector_fallback_note": "",
+            "countries": countries or [],
+            "explicit_geo_scope": explicit_geo_scope,
+            "geo_fallback_note": "",
             "fundamentals": [],
             "news": [],
             "themes": [],
             "candidates": [],
             "risk_assessment": [],
             "gate1_excluded": gate1_excluded,
+            "thesis_rejected": [],
             "compliance_flagged": [],
             "compliance_checked": False,
             "allocation": [],
@@ -1448,6 +1627,8 @@ async def _interactive_loop(
                 excluded_sectors=excluded_sectors,
                 focus=intent.focus,
                 explicit_sector_scope=bool(intent.priority_sectors),
+                countries=intent.countries,
+                explicit_geo_scope=bool(intent.countries),
             )
         except Exception as e:
             print(f"⚠ Pipeline fallita: {e}")

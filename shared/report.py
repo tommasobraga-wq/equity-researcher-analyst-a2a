@@ -1,7 +1,8 @@
 """HTML report generator for the A2A pipeline output."""
+
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -11,11 +12,11 @@ from shared.models import Candidato, Correction, Report
 from shared.validators import Violation, validate
 
 _SCORING_DIMS: list[tuple[str, str]] = [
-    ("forza_catalizzatore",  "Forza catalizzatore"),
-    ("fit_orizzonte",        "Fit orizzonte"),
+    ("forza_catalizzatore", "Forza catalizzatore"),
+    ("fit_orizzonte", "Fit orizzonte"),
     ("asimmetria_narrativa", "Asimmetria narrativa"),
-    ("qualita_evidenze",     "Qualità evidenze"),
-    ("rischio_crowding",     "Rischio crowding"),
+    ("qualita_evidenze", "Qualità evidenze"),
+    ("rischio_crowding", "Rischio crowding"),
 ]
 
 _JINJA_ENV = Environment(
@@ -98,9 +99,16 @@ def generate_html(
     run_id: str | None = None,
 ) -> tuple[Path, list[Violation]]:
     report, json_failed = _parse_report(report_dict)
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
     timestamp = run_id or now.strftime("%Y%m%d_%H%M%S")
-    label = now.strftime("%d %B %Y, %H:%M")
+    # Server has no reliable notion of "the reader's timezone" (CLI run on one
+    # machine, viewed via the gateway from another) — ship UTC plus an ISO
+    # timestamp and let the browser render it in its own local timezone
+    # (report.html.j2 does this via `Intl`/`toLocaleString`, no server config
+    # needed). `label` is the no-JS fallback, explicitly marked UTC so it's
+    # never mistaken for local time.
+    now_iso = now.isoformat()
+    label = now.strftime("%d %B %Y, %H:%M UTC")
 
     corrections = _parse_corrections(qa_verdict)
     applied_corrections: list[str] = []
@@ -115,7 +123,8 @@ def generate_html(
 
     exec_time_str = (
         f"{execution_seconds // 60}m {execution_seconds % 60}s"
-        if execution_seconds is not None else ""
+        if execution_seconds is not None
+        else ""
     )
 
     context = {
@@ -128,6 +137,7 @@ def generate_html(
     template = _JINJA_ENV.get_template("report.html.j2")
     html = template.render(
         label=label,
+        now_iso=now_iso,
         context=context,
         sintesi=executive_summary,
         json_failed=json_failed,

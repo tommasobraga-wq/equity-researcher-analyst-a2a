@@ -7,6 +7,7 @@ tools (pure reasoning/extraction, nothing to fetch) and a forced output
 schema, exactly the same mechanism every other agent uses for structured
 output.
 """
+
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
@@ -39,8 +40,14 @@ Call submit_final_answer with:
 - priority_sectors: sector names to prioritize, if the user mentioned any (empty list
   otherwise — the caller falls back to its own defaults)
 - excluded_sectors: sector names to exclude, if the user mentioned any (empty list otherwise)
+- countries: English country names (e.g. "Italy", "Germany"), only if the user explicitly
+  named a specific country or national market (e.g. "mercato azionario italiano" → ["Italy"];
+  "opportunità in Francia e Germania" → ["France", "Germany"]). Empty list otherwise — do not
+  infer a country from a generic request.
 - focus: a short natural-language summary of what the user is after (e.g. "settore bancario
-  europeo", "confronto diretto NVDA vs AMD") — used to steer news search"""
+  europeo", "confronto diretto NVDA vs AMD") — used to steer news search. Summarize only what
+  the user actually said; never invent themes, sectors, or macro drivers they didn't mention.
+  A generic request gets a generic focus."""
 
 _OUTPUT_SCHEMA = {
     "type": "object",
@@ -49,9 +56,17 @@ _OUTPUT_SCHEMA = {
         "tickers": {"type": "array", "items": {"type": "string"}},
         "priority_sectors": {"type": "array", "items": {"type": "string"}},
         "excluded_sectors": {"type": "array", "items": {"type": "string"}},
+        "countries": {"type": "array", "items": {"type": "string"}},
         "focus": {"type": "string"},
     },
-    "required": ["mode", "tickers", "priority_sectors", "excluded_sectors", "focus"],
+    "required": [
+        "mode",
+        "tickers",
+        "priority_sectors",
+        "excluded_sectors",
+        "countries",
+        "focus",
+    ],
 }
 
 
@@ -61,6 +76,7 @@ class CoordinatorIntent:
     tickers: list[str] = field(default_factory=list)
     priority_sectors: list[str] = field(default_factory=list)
     excluded_sectors: list[str] = field(default_factory=list)
+    countries: list[str] = field(default_factory=list)
     focus: str = ""
 
 
@@ -77,8 +93,7 @@ async def interpret_prompt(
     history: list[dict[str, Any]],
 ) -> CoordinatorIntent:
     user_turn = (
-        f"CONVERSAZIONE PRECEDENTE:\n{_history_block(history)}\n\n"
-        f"RICHIESTA ATTUALE:\n{user_prompt}"
+        f"CONVERSAZIONE PRECEDENTE:\n{_history_block(history)}\n\nRICHIESTA ATTUALE:\n{user_prompt}"
     )
     data = await run_react(
         client,
@@ -91,12 +106,14 @@ async def interpret_prompt(
         # No A2A task here (this runs per free-text turn, before any pipeline
         # run_id exists) — a fresh id per call is enough to trace this call
         # in audit_log, it doesn't need to align with the eventual run_id.
-        correlation_id=str(uuid.uuid4()), agent="coordinator",
+        correlation_id=str(uuid.uuid4()),
+        agent="coordinator",
     )
     return CoordinatorIntent(
         mode=data["mode"],
         tickers=data.get("tickers") or [],
         priority_sectors=data.get("priority_sectors") or [],
         excluded_sectors=data.get("excluded_sectors") or [],
+        countries=data.get("countries") or [],
         focus=data.get("focus") or "",
     )
