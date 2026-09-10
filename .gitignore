@@ -13,3 +13,5 @@ dist/
 output/
 backups/
 .playwright-mcp/
+.pytest_cache/
+gitleaks-full-report.json

@@ -1,3 +1,8 @@
+> **Superato.** Note di pianificazione iniziale, scritte prima della v2
+> dell'architettura. Conservato come riferimento storico — vedi il
+> [README](../../README.md) e [CLAUDE.md](../../CLAUDE.md) per lo stato
+> attuale del progetto.
+
 # Equity Researcher A2A — Contesto Progetto
 > Documento generato da conversazione con Claude (claude.ai) — 25 aprile 2026
 > Da condividere con Claude Code CLI per continuare lo sviluppo

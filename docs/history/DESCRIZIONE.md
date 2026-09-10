@@ -1,3 +1,10 @@
+> **Superseded.** Written when the system was a 5-agent pipeline on a mixed
+> framework stack (OpenAI Agents SDK / Smolagents / BeeAI). That split was
+> later retired for a single shared ReAct loop, and Compliance Agent,
+> Portfolio Manager, and the gateway UI were added since. Kept for historical
+> reference only — see the root [README](../../README.md) and
+> [CLAUDE.md](../../CLAUDE.md) for the current architecture.
+
 # Equity Researcher A2A — System Description
 
 ## The Solution

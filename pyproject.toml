@@ -7,11 +7,15 @@ name = "equity-researcher-analyst-a2a"
 version = "0.1.0"
 description = "Multi-agent equity research system via A2A protocol"
 requires-python = ">=3.11"
+license = "MIT"
+authors = [
+    { name = "Tommaso Braga" },
+]
 dependencies = [
     # HTTP servers (every agent)
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",
-    # Anthropic — used directly by all 5 agents (native ReAct loop + report writer)
+    # Anthropic — used directly by all 7 agents (shared ReAct loop + report writer)
     "anthropic>=0.40.0",
     # Financial data tools
     "feedparser>=6.0.12",
